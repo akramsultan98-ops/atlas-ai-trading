@@ -5,6 +5,15 @@ versions by implementation phase rather than semver until Phase 11.
 
 ## [Unreleased]
 
+### End-to-end integration
+- Pipeline test driving one strategy through every stage: research → generation →
+  validation → backtest → verification → selection → incubation → human
+  promotion → live execution → monitoring → automatic retirement
+- Promotion now checks lifecycle position before evidence quality, so a
+  never-incubated strategy reports the real problem instead of weak evidence
+- Tests that an armed kill switch halts the pipeline mid-flight, that unrecorded
+  exposure stops everything, and that no credential-shaped string is committed
+
 ### Phase 11 — Operations
 - Telegram alerting, outbound only: no command handler, polling loop or webhook
   receiver exists, and a test asserts none is added

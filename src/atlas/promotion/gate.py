@@ -125,15 +125,19 @@ class PromotionGate:
             )
         if not approved_by.strip():
             raise PromotionRefused("promotion requires a named human approver")
-        if not decision.eligible:
-            raise PromotionRefused("promotion gates not satisfied: " + "; ".join(decision.reasons))
-
+        # Lifecycle position is checked before evidence quality: "this was never
+        # incubated" is the more fundamental failure and the more actionable message.
+        # Judging incubation evidence for a strategy that has none would otherwise
+        # report weak evidence and hide the real problem.
         status = self._registry.status(strategy_id)
         if status is not StrategyStatus.INCUBATING:
             raise PromotionRefused(
                 f"strategy {strategy_id} is {status}, not INCUBATING; only an incubated "
                 "strategy can be promoted (AI-05)"
             )
+
+        if not decision.eligible:
+            raise PromotionRefused("promotion gates not satisfied: " + "; ".join(decision.reasons))
 
         promotion_id = str(uuid.uuid4())
         now = utcnow().isoformat()
