@@ -18,6 +18,19 @@ at the close of each phase.
 | ADR-006 no financial defaults | `atlas/config.py::RiskSettings` | `test_config.py::test_missing_risk_parameter_is_error` |
 | AI-01 research plane holds no credentials | `atlas/config.py::Settings.for_research_plane` | `test_config.py::test_research_plane_has_no_credentials` |
 
-## Phases 2–11
+## Phase 2 — Market data
+
+| Requirement | Implementation | Test |
+|---|---|---|
+| DATA-01 Binance klines the sole price source | `atlas/data/klines.py::BinanceKlineClient` | `test_data_klines.py::test_parses_rows_into_klines` |
+| DATA-02 only closed candles produce signals | `BinanceKlineClient.fetch` (drops bars whose `close_time` is in the future) | `test_data_klines.py::test_in_progress_bar_is_dropped` |
+| DATA-03 validate before use, never interpolate | `atlas/data/validate.py::validate_series` | `test_data_validate.py::test_gap_detected`, `::test_duplicate_detected`, `::test_out_of_order_detected`, `::test_validation_never_mutates_the_series` |
+| DATA-04 content-hashed reproducible cache | `atlas/data/models.py::KlineSeries.content_hash`, `atlas/data/store.py::KlineStore` | `test_data_store.py::test_round_trip_preserves_content`, `::test_tampered_cache_raises` |
+| DATA-05 staleness halts new entries | `atlas/data/validate.py::check_staleness` | `test_data_validate.py::test_staleness_detected_beyond_two_intervals` |
+| DATA-06 default 1h timeframe | `atlas/data/models.py::Timeframe` | `test_data_models.py::test_timeframe_durations` |
+| VER-04 chronological out-of-sample split | `KlineSeries.split_chronological` | `test_data_models.py::test_chronological_split_preserves_order` |
+| ADR-003 Decimal prices through the cache | `atlas/data/store.py` | `test_data_store.py::test_round_trip_preserves_decimal_precision` |
+
+## Phases 3–11
 
 Populated as each phase completes.
