@@ -5,6 +5,18 @@ versions by implementation phase rather than semver until Phase 11.
 
 ## [Unreleased]
 
+### Phase 10 — Monitoring and automatic retirement
+- The source's three rules implemented with ATLAS parameters: equity-curve band
+  breach, rolling win rate, rolling profit factor (MON-01..03)
+- Two ATLAS additions: consecutive-loss suspension and signal-starvation alerting
+  (MON-04, MON-05)
+- Band sigma scales with sqrt(n), so the band does not tighten artificially as
+  trades accumulate
+- Any single rule retires — no quorum, weighting or averaging (MON-07)
+- Retirement is one-way with no programmatic reactivation anywhere (MON-06)
+- Regression test replaying a run-up → decay → false-recovery → collapse curve,
+  asserting automatic retirement with no human consulted
+
 ### Phase 9 — Execution
 - Signed Binance spot broker; testnet default, live requires an explicit choice
   and refuses to build an HTTP client implicitly (EXEC-01)
