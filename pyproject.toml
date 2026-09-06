@@ -32,7 +32,11 @@ atlas = ["db/*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+# "." puts the repository root on sys.path so the cross-module fixture imports
+# (`from tests.test_backtest import ...`) resolve. Without it those imports work only
+# under `python -m pytest`, which inserts the CWD implicitly, and fail under the bare
+# `pytest` console script that CI uses.
+pythonpath = ["src", "."]
 addopts = "-q --strict-markers"
 
 [tool.ruff]

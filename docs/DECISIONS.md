@@ -100,3 +100,30 @@ missing value is a startup error.
 **Rationale.** A default risk parameter is a silent policy. If configuration is
 misloaded, the correct behaviour is a loud failure, not trading at a plausible-looking
 number nobody chose.
+
+---
+
+## ADR-007 — Verify against CI's command form, not a convenient one
+
+**Status:** accepted
+
+**Context.** CI failed on 15 consecutive runs while local runs reported green. The cause
+was not the code: `python -m pytest` inserts the current working directory into
+`sys.path`, while the bare `pytest` console script does not. Fourteen test modules import
+shared fixtures as `from tests.test_backtest import ...`, which resolves only when the
+repository root is importable. Local verification used `python -m pytest`; CI uses
+`pytest`. Local was passing under a more permissive `sys.path` than CI ever had.
+
+**Decision.** `pythonpath = ["src", "."]` in the pytest configuration, so the repository
+root is on `sys.path` regardless of how pytest is invoked. `scripts/ci-local.sh` runs the
+exact CI steps in the exact CI command form, and is the only local run that counts as
+evidence CI will pass.
+
+**Rationale.** The failure was invisible precisely because the local check was weaker
+than the real one. Fixing the import path stops the error; running the same command form
+stops the class of error. A green local run that used a different invocation than CI is
+not evidence about CI.
+
+**Consequences.** Claims about CI status must cite `scripts/ci-local.sh` or an actual
+GitHub Actions run. A bare `pytest`/`python -m pytest` difference is now a configuration
+detail rather than a behavioural one.

@@ -55,7 +55,9 @@ Gates reject terminally. Phases 1–6 contain no LLM and no network write path.
 | 11 | Operations | ✅ complete |
 | 12 | Runtime orchestration | ✅ complete |
 
-All twelve phases are implemented. **421 tests, ruff clean, mypy strict clean.**
+All twelve phases are implemented. **462 tests across 27 modules, 92% coverage, ruff clean, mypy strict clean.**
+
+Verify with `./scripts/ci-local.sh`, which runs the exact steps and command forms CI uses.
 
 **No real-money trading.** No exchange credentials exist in this project, the account is
 not funded, and `ATLAS_EXCHANGE_ENV` defaults to `testnet` (which `Settings` refuses to

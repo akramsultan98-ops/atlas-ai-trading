@@ -5,6 +5,13 @@ versions by implementation phase rather than semver until Phase 11.
 
 ## [Unreleased]
 
+### Fixed — CI had never passed
+- `pythonpath = ["src", "."]` so cross-module fixture imports resolve under the bare
+  `pytest` console script CI uses, not only under `python -m pytest`
+- `scripts/ci-local.sh` runs the exact CI steps in the exact CI command form
+- ADR-007 records the invocation trap
+- README test count reconciled to the verified 462 across 27 modules, 92% coverage
+
 ### Order, fill and position ledger
 - Writer for the `orders`, `fills` and `positions` tables, which had existed since
   Phase 1 with nothing populating them
