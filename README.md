@@ -39,31 +39,43 @@ Gates reject terminally. Phases 1–6 contain no LLM and no network write path.
 
 ## Status
 
-| Phase | Scope | State |
-|---|---|---|
-| 0 | Repository, toolchain, CI | ✅ complete |
-| 1 | Safety primitives — config, models, kill switch, audit, persistence | ✅ complete |
-| 2 | Market data | ✅ complete |
-| 3 | Strategy representation | ✅ complete |
-| 4 | Backtest engine | ✅ complete |
-| 5 | Verification and selection | ✅ complete |
-| 6 | Risk and sizing | ✅ complete |
-| 7 | Research loop | ✅ complete |
-| 8 | Incubation and promotion | ✅ complete |
-| 9 | Execution | ✅ complete (testnet only; no credentials exist) |
-| 10 | Monitoring and retirement | ✅ complete |
-| 11 | Operations | ✅ complete |
-| 12 | Runtime orchestration | ✅ complete |
+Evidence tiers are distinct and are not interchangeable:
 
-All twelve phases are implemented. **462 tests across 27 modules, 92% coverage, ruff clean, mypy strict clean.**
+| Tier | Meaning |
+|---|---|
+| **UNIT TESTED** | Passes in-process tests. Says nothing about the exchange. |
+| **INTEGRATION TESTED** | Assembled components exercised together against scripted fixtures. |
+| **TESTNET VERIFIED** | A real request/response with Binance Testnet succeeded. |
+| **LIVE VERIFIED** | Exercised against Binance mainnet with real funds. |
 
+| Component | Highest tier reached |
+|---|---|
+| Safety primitives (kill switch, audit chain, persistence) | INTEGRATION TESTED |
+| Market data fetch / validate / cache | UNIT TESTED |
+| Strategy spec, indicators, evaluator | UNIT TESTED |
+| Backtest engine + independent verifier | UNIT TESTED |
+| Selection gates | UNIT TESTED |
+| Risk engine, sizing, exchange filters | UNIT TESTED |
+| Research loop + AI containment | UNIT TESTED |
+| Incubation, divergence, promotion | INTEGRATION TESTED |
+| Broker, brackets, idempotency, reconciliation | INTEGRATION TESTED |
+| Fill ingestion, ledger, positions | INTEGRATION TESTED |
+| Monitoring, retirement, supervisor | INTEGRATION TESTED |
+| Runtime service, scheduler, recovery, CLI | INTEGRATION TESTED |
+| **Anything requiring Binance** | **NOT TESTED — see below** |
+
+**Nothing in ATLAS has ever contacted a Binance endpoint.** No TESTNET VERIFIED or
+LIVE VERIFIED component exists. The development environment's egress policy returns
+`403` at the tunnel for both `testnet.binance.vision:443` and `api.binance.com:443`,
+so every exchange interaction to date has been against a scripted stub.
+
+512 tests, 89% coverage, ruff and mypy strict clean, GitHub Actions green.
 Verify with `./scripts/ci-local.sh`, which runs the exact steps and command forms CI uses.
 
 **No real-money trading.** No exchange credentials exist in this project, the account is
-not funded, and `ATLAS_EXCHANGE_ENV` defaults to `testnet` (which `Settings` refuses to
-change outside `env=production`). The pre-live checklist is in
-[docs/RUNBOOK.md](docs/RUNBOOK.md); it is not to be exercised until a full system audit
-and explicit approval. See [docs/SECURITY.md](docs/SECURITY.md).
+not funded, `ATLAS_EXCHANGE_ENV` defaults to `testnet`, and `live` is refused unless
+`ATLAS_ENV=production`. See [docs/SECURITY.md](docs/SECURITY.md) and the pre-live
+checklist in [docs/RUNBOOK.md](docs/RUNBOOK.md).
 
 ## Quick start
 
@@ -71,8 +83,17 @@ and explicit approval. See [docs/SECURITY.md](docs/SECURITY.md).
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
 cp .env.example .env      # no financial parameter has a default; all must be set
-pytest
+./scripts/ci-local.sh     # lint, format, types, tests - exactly as CI runs them
+
+atlas preflight           # verify exchange reachability and environment
+atlas run --once          # a single trading cycle
+atlas run                 # continuous, at ATLAS_TICK_INTERVAL_SECONDS
+atlas killswitch status
+atlas audit verify
 ```
+
+`preflight` checks connectivity with an unsigned `/time` call before anything is
+signed, so an unreachable exchange is distinguishable from a bad credential.
 
 ## Documentation
 

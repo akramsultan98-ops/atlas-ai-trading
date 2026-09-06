@@ -69,6 +69,26 @@ python -m atlas.cli audit tail -n 50
 A verification failure means the log was modified or truncated. Treat as a security
 incident: arm the kill switch and investigate before trading.
 
+## Binance Testnet procedure
+
+Not yet executed. `testnet.binance.vision` is unreachable from the development
+environment (egress policy, `403` at the CONNECT tunnel), so every step below is
+untested and is written from the API contract, not from observed behaviour.
+
+1. Create a Testnet key at https://testnet.binance.vision (spot only).
+2. Set `ATLAS_EXCHANGE_ENV=testnet`, `ATLAS_BINANCE_API_KEY`, `ATLAS_BINANCE_API_SECRET`.
+3. `atlas preflight` — expect `exchange_reachable: yes`, `authenticated: yes`, and a
+   `clock_drift_ms` under 5000. Drift above that exceeds `recvWindow` and every signed
+   request will be rejected.
+4. `atlas killswitch init` — the deliberate release to trade.
+5. `atlas run --once` — one cycle. Inspect with `atlas audit tail`.
+6. Confirm in order: klines fetched and validated · order submitted · order acknowledged
+   · protective stop present · fill retrieved · fill in the ledger · reconciliation clean.
+7. Kill the process mid-position and restart. Recovery must reconcile before entering.
+8. Only then `atlas run` continuously.
+
+If any step fails, stop. Do not proceed to the next.
+
 ## Pre-live checklist
 
 Not to be exercised until the full system audit and explicit approval.

@@ -5,6 +5,21 @@ versions by implementation phase rather than semver until Phase 11.
 
 ## [Unreleased]
 
+### Exchange layer wired (Phases B–G)
+- `UrllibBrokerTransport`: signed Binance REST over the standard library, with
+  bounded retries, terminal-vs-retryable classification and query-string redaction
+  so signatures never reach a log or an exception
+- Broker read methods for reconciliation and ingestion: `server_time`,
+  `exchange_info`, `order_status`, `my_trades`
+- `AtlasService` + `build_service`: constructs and connects every component and runs
+  the operating loop; acquires and validates its own market data
+- `FillIngestor`: the ledger's missing producer, resuming from the highest recorded
+  trade id, idempotent on exchange trade id
+- `atlas` console script with `preflight`, `run`, `killswitch`, `audit`
+- Configuration for symbols, timeframe, tick interval, history depth, Telegram
+- Fixed: `decimal.InvalidOperation` escaped ingestion's handler (it subclasses
+  `ArithmeticError`, not `ValueError`), so one malformed price would abort a poll
+
 ### Fixed — CI had never passed
 - `pythonpath = ["src", "."]` so cross-module fixture imports resolve under the bare
   `pytest` console script CI uses, not only under `python -m pytest`
