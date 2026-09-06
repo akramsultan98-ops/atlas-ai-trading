@@ -10,7 +10,7 @@ import pytest
 from tests.conftest import StubFilterProvider
 from tests.test_backtest import POLICY, series_from
 from tests.test_evaluator import percent_spec
-from tests.test_execution import StubTransport, ack
+from tests.test_execution import StubTransport, ack, oco_reply
 
 from atlas.audit import AuditLog
 from atlas.data.models import KlineSeries, Timeframe
@@ -228,7 +228,7 @@ def test_tick_places_a_bracketed_entry(
 ) -> None:
     killswitch.initialise()
     _live_strategy(db)
-    transport = StubTransport(ack("entry"), ack("stop", status="NEW"))
+    transport = StubTransport(ack("entry"), oco_reply())
     service = _service(db, audit, killswitch, transport)
 
     result = service.tick(
@@ -250,7 +250,7 @@ def test_daily_loss_breach_halts_before_any_entry(
     """RISK-05: a breached account stops before it adds risk."""
     killswitch.initialise()
     _live_strategy(db)
-    transport = StubTransport(ack("entry"), ack("stop", status="NEW"))
+    transport = StubTransport(ack("entry"), oco_reply())
     service = _service(db, audit, killswitch, transport)
 
     result = service.tick(
@@ -306,7 +306,7 @@ def test_no_duplicate_position_per_symbol(
     """RISK-08."""
     killswitch.initialise()
     _live_strategy(db)
-    transport = StubTransport(ack("entry"), ack("stop", status="NEW"))
+    transport = StubTransport(ack("entry"), oco_reply())
     service = _service(db, audit, killswitch, transport)
 
     account = AccountState(
@@ -356,7 +356,7 @@ def test_retired_strategy_takes_no_further_entries(
 ) -> None:
     killswitch.initialise()
     strategy_id = _live_strategy(db)
-    transport = StubTransport(ack("entry"), ack("stop", status="NEW"))
+    transport = StubTransport(ack("entry"), oco_reply())
     service = _service(db, audit, killswitch, transport)
 
     collapsing: dict[str, Any] = {strategy_id: [D("-0.08")] * 40}

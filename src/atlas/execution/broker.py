@@ -32,6 +32,11 @@ SPOT_MAINNET = "https://api.binance.com"
 SPOT_TESTNET = "https://testnet.binance.vision"
 
 RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
+
+# The OCO endpoint. Binance also exposes a newer `/api/v3/orderList/oco` with a
+# different parameter shape; this is the long-standing one. Neither has been exercised
+# against a real exchange from this environment (see docs/EVIDENCE.md).
+OCO_ENDPOINT = "/api/v3/order/oco"
 EXECUTION_ACTOR = "execution"
 
 
@@ -83,6 +88,35 @@ class AssetBalance:
     @property
     def total(self) -> Decimal:
         return self.free + self.locked
+
+
+@dataclass(frozen=True)
+class OcoRequest:
+    """A protective exit: stop-loss and take-profit as one order list.
+
+    Two independent sell orders cannot both stand for the same holding on spot -- the
+    first locks the base asset and the second is refused for insufficient balance. An
+    OCO is the exchange's construct for the pair: whichever side fills cancels the
+    other, so the position leaves at exactly one of its two declared levels.
+    """
+
+    list_client_order_id: str
+    stop_client_order_id: str
+    limit_client_order_id: str
+    symbol: str
+    side: OrderSide
+    quantity: Decimal
+    stop_price: Decimal
+    stop_limit_price: Decimal
+    take_profit_price: Decimal
+
+
+@dataclass(frozen=True)
+class OcoAck:
+    order_list_id: str
+    stop: OrderAck
+    take_profit: OrderAck
+    raw: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -311,6 +345,73 @@ class BinanceSpotBroker:
         )
         return ack
 
+    def place_oco(self, request: OcoRequest) -> OcoAck:
+        """Transmit the protective exit pair (EXEC-02, spec section 3 control plane).
+
+        Permitted while the kill switch is armed, for the same reason a lone stop is:
+        refusing it would leave an open position naked, which is the opposite of what
+        arming is for (KILL-03).
+        """
+        self._killswitch.check_can_place_protective()
+
+        params: dict[str, Any] = {
+            "symbol": request.symbol.upper(),
+            "side": str(request.side),
+            "quantity": str(request.quantity),
+            "price": str(request.take_profit_price),
+            "stopPrice": str(request.stop_price),
+            "stopLimitPrice": str(request.stop_limit_price),
+            "stopLimitTimeInForce": "GTC",
+            "listClientOrderId": request.list_client_order_id,
+            "limitClientOrderId": request.limit_client_order_id,
+            "stopClientOrderId": request.stop_client_order_id,
+        }
+
+        self._audit.append(
+            AuditEventType.ORDER_INTENT,
+            {
+                "client_order_id": request.list_client_order_id,
+                "symbol": request.symbol,
+                "side": str(request.side),
+                "role": "OCO_EXIT",
+                "quantity": str(request.quantity),
+                "stop_price": str(request.stop_price),
+                "take_profit_price": str(request.take_profit_price),
+                "exchange_env": str(self.exchange_env),
+            },
+            EXECUTION_ACTOR,
+        )
+
+        url = f"{self.base_url}{OCO_ENDPOINT}?{self._signed_query(params)}"
+        try:
+            raw = self._require_transport().post(url, self._headers())
+        except OrderRejection as exc:
+            self._audit.append(
+                AuditEventType.ORDER_RESULT,
+                {
+                    "client_order_id": request.list_client_order_id,
+                    "accepted": False,
+                    "retryable": exc.retryable,
+                    "error": str(exc),
+                },
+                EXECUTION_ACTOR,
+            )
+            raise
+
+        ack = _parse_oco(raw, request)
+        self._audit.append(
+            AuditEventType.ORDER_RESULT,
+            {
+                "client_order_id": request.list_client_order_id,
+                "order_list_id": ack.order_list_id,
+                "stop_status": ack.stop.status,
+                "take_profit_status": ack.take_profit.status,
+                "accepted": True,
+            },
+            EXECUTION_ACTOR,
+        )
+        return ack
+
     def cancel(self, symbol: str, client_order_id: str) -> dict[str, Any]:
         """Cancel by client order id. Always permitted: cancelling reduces exposure."""
         query = self._signed_query({"symbol": symbol.upper(), "origClientOrderId": client_order_id})
@@ -397,6 +498,42 @@ class BinanceSpotBroker:
     def account_balances(self) -> dict[str, Decimal]:
         """Free balances only. Convenience over `account_snapshot`."""
         return {a: b.free for a, b in self.account_snapshot().items() if b.free > 0}
+
+
+def _parse_oco(raw: Any, request: OcoRequest) -> OcoAck:
+    """Map an OCO response onto its two legs, identified by client order id.
+
+    Position in the `orderReports` array is not the identity: the legs are matched by
+    the client order ids ATLAS chose, so a response that lists them in either order
+    still resolves correctly.
+    """
+    if not isinstance(raw, dict):
+        raise OrderRejection("unexpected OCO response", retryable=False)
+
+    reports = raw.get("orderReports") or raw.get("orders") or []
+    by_client_id = {str(r.get("clientOrderId", "")): r for r in reports if isinstance(r, dict)}
+
+    def leg(client_id: str, role: str) -> OrderAck:
+        report = by_client_id.get(client_id)
+        if report is None:
+            raise OrderRejection(
+                f"OCO response is missing its {role} leg ({client_id})", retryable=False
+            )
+        return OrderAck(
+            client_order_id=client_id,
+            exchange_order_id=str(report.get("orderId", "")),
+            symbol=str(report.get("symbol", request.symbol)),
+            status=str(report.get("status", "NEW")),
+            executed_qty=Decimal(str(report.get("executedQty", "0"))),
+            raw=report,
+        )
+
+    return OcoAck(
+        order_list_id=str(raw.get("orderListId", "")),
+        stop=leg(request.stop_client_order_id, "stop"),
+        take_profit=leg(request.limit_client_order_id, "take-profit"),
+        raw=raw,
+    )
 
 
 def classify_rejection(status: int, body: str) -> OrderRejection:

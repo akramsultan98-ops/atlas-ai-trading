@@ -10,7 +10,7 @@ silently exceeds the risk budget, so an unfillable trade is refused instead.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from decimal import ROUND_DOWN, Decimal
+from decimal import ROUND_DOWN, ROUND_UP, Decimal
 from enum import StrEnum
 
 from atlas.models import PositionSide
@@ -51,6 +51,21 @@ class ExchangeFilters:
         if self.tick_size <= 0:
             return price
         return (price / self.tick_size).to_integral_value(rounding=ROUND_DOWN) * self.tick_size
+
+    def round_price_toward(self, price: Decimal, reference: Decimal) -> Decimal:
+        """Snap to the tick grid, moving toward `reference`.
+
+        A price off the grid is rejected outright (PRICE_FILTER), so rounding is not
+        optional. The direction is not arbitrary either: moving a protective stop toward
+        the entry can only reduce the risk the position was sized for, and moving a
+        target toward the entry can only make it easier to fill. Rounding away from
+        entry would let realised risk exceed the budget that authorised the trade.
+        """
+        if self.tick_size <= 0:
+            return price
+        ticks = price / self.tick_size
+        rounding = ROUND_DOWN if price > reference else ROUND_UP
+        return ticks.to_integral_value(rounding=rounding) * self.tick_size
 
 
 @dataclass(frozen=True)

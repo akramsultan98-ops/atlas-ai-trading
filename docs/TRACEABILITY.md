@@ -157,3 +157,14 @@ Each unit test passed; the system they formed did not meet the requirement.
 | RISK-08 binds on a real open position | `Ledger.open_symbols` fed by the entry path | `test_position_lifecycle.py::test_the_symbol_is_now_blocked_for_re_entry` |
 | MON-01..06 see realised returns | `Ledger.realised_returns` fed by position closes | `test_position_lifecycle.py::test_the_monitor_can_finally_see_a_realised_return` |
 | Schema migration reaches existing databases | `db/engine.py::_migrate` | `test_position_lifecycle.py::test_the_position_link_survives_a_reopened_database` |
+
+## Protective exit
+
+| Requirement | Implementation | Test |
+|---|---|---|
+| Control plane enforces stop AND target (spec line 57, STRAT-02/03) | `open_bracketed_position` places an OCO exit pair | `test_position_lifecycle.py::test_the_exit_is_one_order_list_carrying_both_levels` |
+| A filled target closes the position | `FillIngestor._close_if_exit_filled` | `test_position_lifecycle.py::test_a_filled_target_closes_the_position` |
+| PRICE_FILTER: levels sit on the tick grid | `ExchangeFilters.round_price_toward` | `test_position_lifecycle.py::test_protective_levels_are_snapped_onto_the_tick_grid` |
+| Exit legs resolved by client id, not array order | `broker._parse_oco` | `test_position_lifecycle.py::test_the_exit_legs_are_matched_by_id_not_by_position` |
+| A half-answered OCO is not a protected position | `broker._parse_oco` | `test_position_lifecycle.py::test_a_half_answered_oco_is_a_rejection` |
+| KILL-03 protective orders allowed while armed | `BinanceSpotBroker.place_oco` | `test_position_lifecycle.py::test_the_exit_pair_is_placeable_while_the_switch_is_armed` |

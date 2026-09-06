@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 from tests.conftest import StubFilterProvider
 from tests.test_backtest import POLICY
-from tests.test_execution import StubTransport, ack
+from tests.test_execution import StubTransport, ack, oco_reply
 from tests.test_runtime import NOW, _live_strategy, _signal_series
 
 from atlas.audit import AuditLog
@@ -217,7 +217,7 @@ def test_incomplete_valuation_suspends_entries_without_arming(
     """
     killswitch.initialise()
     _live_strategy(db)
-    transport = StubTransport(ack("entry"), ack("stop", status="NEW"))
+    transport = StubTransport(ack("entry"), oco_reply())
     broker = BinanceSpotBroker(
         "k", "s", killswitch, audit, exchange_env=ExchangeEnv.TESTNET, transport=transport
     )
@@ -264,7 +264,7 @@ def test_deployed_capital_reaches_the_sizer(
     """
     killswitch.initialise()
     _live_strategy(db)
-    transport = StubTransport(ack("entry"), ack("stop", status="NEW"))
+    transport = StubTransport(ack("entry"), oco_reply())
     broker = BinanceSpotBroker(
         "k", "s", killswitch, audit, exchange_env=ExchangeEnv.TESTNET, transport=transport
     )
@@ -315,7 +315,7 @@ def test_unavailable_filters_decline_the_entry(
     """Not knowing the exchange's minimum is not the same as there being none."""
     killswitch.initialise()
     _live_strategy(db)
-    transport = StubTransport(ack("entry"), ack("stop", status="NEW"))
+    transport = StubTransport(ack("entry"), oco_reply())
     broker = BinanceSpotBroker(
         "k", "s", killswitch, audit, exchange_env=ExchangeEnv.TESTNET, transport=transport
     )
@@ -360,7 +360,7 @@ def test_the_symbols_own_min_notional_binds(
     """
     killswitch.initialise()
     _live_strategy(db)
-    transport = StubTransport(ack("entry"), ack("stop", status="NEW"))
+    transport = StubTransport(ack("entry"), oco_reply())
     broker = BinanceSpotBroker(
         "k", "s", killswitch, audit, exchange_env=ExchangeEnv.TESTNET, transport=transport
     )

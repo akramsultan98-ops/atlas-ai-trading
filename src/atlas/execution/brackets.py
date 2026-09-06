@@ -18,6 +18,8 @@ from atlas.audit import AuditLog
 from atlas.errors import KillSwitchArmedError, SafetyError
 from atlas.execution.broker import (
     BinanceSpotBroker,
+    OcoAck,
+    OcoRequest,
     OrderAck,
     OrderRejection,
     OrderRequest,
@@ -26,6 +28,7 @@ from atlas.execution.broker import (
 from atlas.execution.idempotency import client_order_id
 from atlas.execution.ledger import Ledger
 from atlas.models import AuditEventType, OrderSide, PositionSide
+from atlas.risk.sizing import ExchangeFilters
 
 
 class UnprotectedPositionError(SafetyError):
@@ -44,10 +47,20 @@ class EntryDidNotFillError(OrderRejection):
 @dataclass(frozen=True)
 class BracketResult:
     entry: OrderAck
-    stop: OrderAck
+    exit_orders: OcoAck
     position_id: str
     entry_price: Decimal
+    stop_price: Decimal
+    target_price: Decimal
     reversed_entry: bool = False
+
+    @property
+    def stop(self) -> OrderAck:
+        return self.exit_orders.stop
+
+    @property
+    def take_profit(self) -> OrderAck:
+        return self.exit_orders.take_profit
 
 
 def _record_failure(ledger: Ledger, client_order_id_: str, error: Exception) -> None:
@@ -110,6 +123,7 @@ def open_bracketed_position(
     stop_price: Decimal,
     reference_price: Decimal,
     target_price: Decimal,
+    filters: ExchangeFilters,
 ) -> BracketResult:
     """Place an entry and its protective stop as one operation (EXEC-02).
 
@@ -155,35 +169,67 @@ def open_bracketed_position(
         )
 
     entry_price = _fill_price(entry, reference_price)
+
+    # Levels must sit on the exchange's price grid or the order is rejected outright
+    # (PRICE_FILTER). Both are snapped toward the entry, which can only shrink the risk
+    # the position was sized for and can only make the target easier to reach.
+    stop = filters.round_price_toward(stop_price, entry_price)
+    target = filters.round_price_toward(target_price, entry_price)
+
     position_id = ledger.open_position(
         strategy_id=strategy_id,
         symbol=symbol,
         side=side,
         quantity=entry.executed_qty,
         entry_price=entry_price,
-        stop_price=stop_price,
-        target_price=target_price,
+        stop_price=stop,
+        target_price=target,
     )
     ledger.link_order_to_position(entry_request.client_order_id, position_id)
 
+    exit_side = _exit_side(side)
     stop_request = OrderRequest(
         client_order_id=client_order_id(
-            strategy_id, signal_bar_time, _exit_side(side), str(OrderRole.STOP)
+            strategy_id, signal_bar_time, exit_side, str(OrderRole.STOP)
         ),
         symbol=symbol,
-        side=_exit_side(side),
+        side=exit_side,
         role=OrderRole.STOP,
         quantity=entry.executed_qty,
-        price=stop_price,
-        stop_price=stop_price,
+        price=stop,
+        stop_price=stop,
     )
-    ledger.record_order(stop_request, strategy_id, broker.exchange_env)
-    ledger.link_order_to_position(stop_request.client_order_id, position_id)
+    target_request = OrderRequest(
+        client_order_id=client_order_id(
+            strategy_id, signal_bar_time, exit_side, str(OrderRole.TARGET)
+        ),
+        symbol=symbol,
+        side=exit_side,
+        role=OrderRole.TARGET,
+        quantity=entry.executed_qty,
+        price=target,
+    )
+    for request in (stop_request, target_request):
+        ledger.record_order(request, strategy_id, broker.exchange_env)
+        ledger.link_order_to_position(request.client_order_id, position_id)
+
+    oco_request = OcoRequest(
+        list_client_order_id=client_order_id(strategy_id, signal_bar_time, exit_side, "EXIT"),
+        stop_client_order_id=stop_request.client_order_id,
+        limit_client_order_id=target_request.client_order_id,
+        symbol=symbol,
+        side=exit_side,
+        quantity=entry.executed_qty,
+        stop_price=stop,
+        stop_limit_price=stop,
+        take_profit_price=target,
+    )
 
     try:
-        stop = broker.place(stop_request)
+        exit_orders = broker.place_oco(oco_request)
     except OrderRejection as stop_error:
         _record_failure(ledger, stop_request.client_order_id, stop_error)
+        _record_failure(ledger, target_request.client_order_id, stop_error)
         # The entry filled but is unprotected. Reverse it now.
         reversal = OrderRequest(
             client_order_id=client_order_id(
@@ -235,9 +281,17 @@ def open_bracketed_position(
             "execution",
         )
         raise OrderRejection(
-            f"stop placement failed on {symbol} ({stop_error}); entry reversed",
+            f"protective exit failed on {symbol} ({stop_error}); entry reversed",
             retryable=False,
         ) from stop_error
 
-    ledger.update_order_status(stop_request.client_order_id, stop.status)
-    return BracketResult(entry=entry, stop=stop, position_id=position_id, entry_price=entry_price)
+    ledger.update_order_status(stop_request.client_order_id, exit_orders.stop.status)
+    ledger.update_order_status(target_request.client_order_id, exit_orders.take_profit.status)
+    return BracketResult(
+        entry=entry,
+        exit_orders=exit_orders,
+        position_id=position_id,
+        entry_price=entry_price,
+        stop_price=stop,
+        target_price=target,
+    )

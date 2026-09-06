@@ -20,7 +20,7 @@ from typing import Any
 import pytest
 from tests.test_backtest import FILTERS, NO_COSTS, POLICY
 from tests.test_evaluator import percent_spec
-from tests.test_execution import StubTransport, _strategy, ack
+from tests.test_execution import StubTransport, _strategy, ack, oco_reply
 from tests.test_research_loop import StubClient, oscillating
 
 from atlas.audit import AuditLog
@@ -170,7 +170,7 @@ def test_full_pipeline_research_to_retirement(pipeline: dict[str, Any]) -> None:
     )
     assert sizing.accepted
 
-    transport = StubTransport(ack("entry"), ack("stop", status="NEW"))
+    transport = StubTransport(ack("entry"), oco_reply())
     broker = BinanceSpotBroker(
         "test-key",
         "test-secret",
@@ -191,6 +191,7 @@ def test_full_pipeline_research_to_retirement(pipeline: dict[str, Any]) -> None:
         stop_price=D("95"),
         reference_price=D("100"),
         target_price=D("110"),
+        filters=FILTERS,
     )
     assert bracket.entry.status == "FILLED"
     assert len(transport.posts) == 2, "entry and its protective stop"
@@ -230,7 +231,7 @@ def test_kill_switch_halts_the_pipeline_mid_flight(pipeline: dict[str, Any]) -> 
     """An armed kill switch stops new exposure everywhere, at any stage."""
     db, audit, killswitch = pipeline["db"], pipeline["audit"], pipeline["killswitch"]
 
-    transport = StubTransport(ack("entry"), ack("stop", status="NEW"))
+    transport = StubTransport(ack("entry"), oco_reply())
     broker = BinanceSpotBroker(
         "k", "s", killswitch, audit, exchange_env=ExchangeEnv.TESTNET, transport=transport
     )
@@ -251,6 +252,7 @@ def test_kill_switch_halts_the_pipeline_mid_flight(pipeline: dict[str, Any]) -> 
             stop_price=D("95"),
             reference_price=D("100"),
             target_price=D("110"),
+            filters=FILTERS,
         )
     assert transport.posts == [], "nothing reached the exchange"
 

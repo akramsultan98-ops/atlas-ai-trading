@@ -5,6 +5,24 @@ versions by implementation phase rather than semver until Phase 11.
 
 ## [Unreleased]
 
+### The exit side of a trade
+- **No take-profit order was ever placed.** Specification line 57 puts stop *and target*
+  enforcement in the control plane, STRAT-02/03 require a target rule on every spec, and
+  BT-06 exits the backtest at either level -- but live execution placed only the stop. A
+  live strategy therefore could never realise a winner at its target while its backtest
+  did, a structural shortfall the monitor reads as decay and retires the strategy for.
+  The exit is now a single OCO order list carrying both levels: two independent sell
+  orders cannot both stand against one spot holding, because the first locks the base
+  asset. A fill on either leg closes the position.
+- **Protective prices were never snapped to the tick grid.** A price off the grid is
+  rejected outright by `PRICE_FILTER`. Both levels are now rounded toward the entry,
+  which can only reduce the risk the position was sized for and can only make the target
+  easier to reach; rounding away from entry would let realised risk exceed the budget
+  that authorised the trade.
+- `docs/EVIDENCE.md` records what is actually known to work and how. Nothing in ATLAS
+  has ever reached TESTNET VERIFIED; the OCO endpoint in particular has never touched a
+  real exchange, and the register says so.
+
 ### The ledger had no producer
 `Ledger.open_position` and `Ledger.close_position` had zero callers anywhere in
 `src/`. The positions table was never written by production code, so the ledger was a

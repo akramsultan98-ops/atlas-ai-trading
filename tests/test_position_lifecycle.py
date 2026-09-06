@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 import pytest
-from tests.test_execution import StubTransport, _strategy, ack
+from tests.test_execution import FILTERS, StubTransport, _strategy, ack, oco_reply
 
 from atlas.audit import AuditLog
 from atlas.db.engine import Database
@@ -37,6 +37,7 @@ from atlas.execution.ledger import Ledger
 from atlas.execution.reconcile import Reconciler
 from atlas.killswitch import KillSwitch
 from atlas.models import ExchangeEnv, OrderSide, PositionSide
+from atlas.risk.sizing import ExchangeFilters
 
 D = Decimal
 BAR_TIME = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)
@@ -79,7 +80,7 @@ def _bracket(
 ) -> tuple[object, Ledger, StubTransport, str]:
     killswitch.initialise()
     strategy_id = _strategy(db)
-    transport = StubTransport(entry or _entry_ack(), stop or ack("stop", status="NEW"))
+    transport = StubTransport(entry or _entry_ack(), stop or oco_reply())
     ledger = Ledger(db, audit)
     result = open_bracketed_position(
         _broker(audit, killswitch, transport),
@@ -93,6 +94,7 @@ def _bracket(
         stop_price=D("29000"),
         reference_price=D("30000"),
         target_price=D("32000"),
+        filters=FILTERS,
     )
     return result, ledger, transport, strategy_id
 
@@ -211,6 +213,7 @@ def test_an_entry_that_fills_nothing_places_no_stop(
             stop_price=D("29000"),
             reference_price=D("30000"),
             target_price=D("32000"),
+            filters=FILTERS,
         )
 
     assert len(transport.posts) == 1, "only the entry was sent"
@@ -246,6 +249,7 @@ def test_a_reversed_entry_closes_its_position(
             stop_price=D("29000"),
             reference_price=D("30000"),
             target_price=D("32000"),
+            filters=FILTERS,
         )
 
     assert ledger.open_positions() == []
@@ -281,6 +285,7 @@ def test_an_unprotected_position_stays_on_the_books(
             stop_price=D("29000"),
             reference_price=D("30000"),
             target_price=D("32000"),
+            filters=FILTERS,
         )
 
     assert len(ledger.open_positions()) == 1
@@ -440,6 +445,7 @@ def test_an_order_the_kill_switch_stopped_is_marked_not_sent(
             stop_price=D("29000"),
             reference_price=D("30000"),
             target_price=D("32000"),
+            filters=FILTERS,
         )
 
     assert transport.posts == []
@@ -468,6 +474,7 @@ def test_a_terminally_rejected_order_is_marked_rejected(
             stop_price=D("29000"),
             reference_price=D("30000"),
             target_price=D("32000"),
+            filters=FILTERS,
         )
 
     row = ledger.order_row(entry_id(strategy_id))
@@ -501,6 +508,7 @@ def test_an_ambiguous_send_stays_open_for_reconciliation(
             stop_price=D("29000"),
             reference_price=D("30000"),
             target_price=D("32000"),
+            filters=FILTERS,
         )
 
     row = ledger.order_row(entry_id(strategy_id))
@@ -512,3 +520,166 @@ def test_an_ambiguous_send_stays_open_for_reconciliation(
     )
     assert report.clean
     assert not killswitch.is_armed()
+
+
+# ------------------------------------------------------- the protective exit pair
+
+
+def target_id(strategy_id: str) -> str:
+    return client_order_id(strategy_id, BAR_TIME, OrderSide.SELL, str(OrderRole.TARGET))
+
+
+def test_the_exit_is_one_order_list_carrying_both_levels(
+    db: Database, audit: AuditLog, killswitch: KillSwitch
+) -> None:
+    """Specification line 57 puts stop *and target* enforcement in the control plane,
+    and BT-06 exits the backtest at either. Live placed only the stop, so a live
+    strategy could never realise a winner at its target while its backtest did -- a
+    structural shortfall the monitor would read as decay and retire it for.
+    """
+    result, ledger, transport, strategy_id = _bracket(db, audit, killswitch)
+
+    assert len(transport.posts) == 2, "the entry, then one OCO"
+    assert "order/oco" in transport.posts[1]
+
+    stop_row = ledger.order_row(stop_id(strategy_id))
+    target_row = ledger.order_row(target_id(strategy_id))
+    assert stop_row is not None and stop_row["role"] == "STOP"
+    assert target_row is not None and target_row["role"] == "TARGET"
+    assert stop_row["position_id"] == target_row["position_id"] == result.position_id  # type: ignore[attr-defined]
+
+
+def test_a_filled_target_closes_the_position(
+    db: Database, audit: AuditLog, killswitch: KillSwitch
+) -> None:
+    """The winning exit, which previously could not happen at all."""
+    _, ledger, _, strategy_id = _bracket(db, audit, killswitch)
+
+    report = _ingest(db, audit, killswitch, [_trade(target_id(strategy_id), "0.001", "32000")])
+
+    assert len(report.closed_positions) == 1  # type: ignore[attr-defined]
+    position = ledger.position(report.closed_positions[0])  # type: ignore[attr-defined]
+    assert position is not None and not position.is_open
+    assert position.realised_pnl == D("1.850")  # (32000 - 30150) * 0.001
+    assert ledger.realised_returns(strategy_id)[0] > 0
+
+
+def test_protective_levels_are_snapped_onto_the_tick_grid(
+    db: Database, audit: AuditLog, killswitch: KillSwitch
+) -> None:
+    """A price off the grid is rejected outright, and the direction is not arbitrary.
+
+    Both levels move toward the entry: the stop can then only risk less than the
+    position was sized for, and the target can only become easier to reach.
+    """
+    killswitch.initialise()
+    strategy_id = _strategy(db)
+    transport = StubTransport(_entry_ack(), oco_reply())
+    ledger = Ledger(db, audit)
+
+    result = open_bracketed_position(
+        _broker(audit, killswitch, transport),
+        audit,
+        ledger,
+        strategy_id=strategy_id,
+        signal_bar_time=BAR_TIME,
+        symbol="BTCUSDT",
+        side=PositionSide.LONG,
+        quantity=D("0.001"),
+        stop_price=D("28999.4"),
+        reference_price=D("30000"),
+        target_price=D("32000.6"),
+        filters=ExchangeFilters(
+            step_size=D("0.00000001"),
+            min_qty=D("0.00000001"),
+            min_notional=D("1"),
+            tick_size=D("1"),
+        ),
+    )
+
+    assert result.stop_price == D("29000")  # up, toward entry: less risk
+    assert result.target_price == D("32000")  # down, toward entry: easier to fill
+    assert ledger.open_positions()[0].stop_price == D("29000")
+
+
+def test_the_exit_legs_are_matched_by_id_not_by_position(
+    db: Database, audit: AuditLog, killswitch: KillSwitch
+) -> None:
+    """A response listing the legs in the other order must still resolve correctly."""
+    from atlas.execution.broker import OcoRequest, _parse_oco
+
+    request = OcoRequest(
+        list_client_order_id="list",
+        stop_client_order_id="the-stop",
+        limit_client_order_id="the-target",
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        quantity=D("0.001"),
+        stop_price=D("29000"),
+        stop_limit_price=D("29000"),
+        take_profit_price=D("32000"),
+    )
+    ack_ = _parse_oco(
+        {
+            "orderListId": 7,
+            "orderReports": [
+                {"clientOrderId": "the-target", "orderId": 2, "status": "NEW"},
+                {"clientOrderId": "the-stop", "orderId": 1, "status": "NEW"},
+            ],
+        },
+        request,
+    )
+    assert ack_.stop.exchange_order_id == "1"
+    assert ack_.take_profit.exchange_order_id == "2"
+
+
+def test_a_half_answered_oco_is_a_rejection(
+    db: Database, audit: AuditLog, killswitch: KillSwitch
+) -> None:
+    """One leg back is not a protected position, and must not be treated as one."""
+    from atlas.execution.broker import OcoRequest, _parse_oco
+
+    request = OcoRequest(
+        list_client_order_id="list",
+        stop_client_order_id="the-stop",
+        limit_client_order_id="the-target",
+        symbol="BTCUSDT",
+        side=OrderSide.SELL,
+        quantity=D("0.001"),
+        stop_price=D("29000"),
+        stop_limit_price=D("29000"),
+        take_profit_price=D("32000"),
+    )
+    with pytest.raises(OrderRejection, match="missing its take-profit leg"):
+        _parse_oco(
+            {"orderListId": 7, "orderReports": [{"clientOrderId": "the-stop", "status": "NEW"}]},
+            request,
+        )
+
+
+def test_the_exit_pair_is_placeable_while_the_switch_is_armed(
+    db: Database, audit: AuditLog, killswitch: KillSwitch
+) -> None:
+    """KILL-03: refusing protection to an open position is the opposite of safety."""
+    from atlas.execution.broker import OcoRequest
+    from atlas.models import KillSwitchTrigger
+
+    killswitch.initialise()
+    killswitch.arm(KillSwitchTrigger.MAX_ACCOUNT_DD, "20% drawdown", "test")
+    transport = StubTransport(oco_reply())
+
+    ack_ = _broker(audit, killswitch, transport).place_oco(
+        OcoRequest(
+            list_client_order_id="list",
+            stop_client_order_id="the-stop",
+            limit_client_order_id="the-target",
+            symbol="BTCUSDT",
+            side=OrderSide.SELL,
+            quantity=D("0.001"),
+            stop_price=D("29000"),
+            stop_limit_price=D("29000"),
+            take_profit_price=D("32000"),
+        )
+    )
+    assert ack_.stop.status == "NEW"
+    assert ack_.take_profit.status == "NEW"

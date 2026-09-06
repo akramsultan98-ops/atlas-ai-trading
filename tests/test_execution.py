@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
+from urllib.parse import parse_qs, urlparse
 
 import pytest
 
@@ -32,8 +34,12 @@ from atlas.models import (
     OrderSide,
     PositionSide,
 )
+from atlas.risk.sizing import ExchangeFilters
 
 D = Decimal
+FILTERS = ExchangeFilters(
+    step_size=D("0.00000001"), min_qty=D("0.00000001"), min_notional=D("1"), tick_size=D("0.01")
+)
 
 
 def _strategy(db: Database) -> str:
@@ -57,15 +63,20 @@ class StubTransport:
         self.deletes: list[str] = []
         self.gets: list[str] = []
 
-    def _next(self) -> Any:
+    def _next(self, url: str = "") -> Any:
         item = self.responses.pop(0) if self.responses else {}
         if isinstance(item, Exception):
             raise item
+        # A callable response is handed the request URL so it can answer the way the
+        # exchange does - echoing back the client order ids it was actually given,
+        # rather than hardcoding ids a test would have to keep in sync.
+        if callable(item):
+            return item(url)
         return item
 
     def post(self, url: str, headers: dict[str, str]) -> Any:
         self.posts.append(url)
-        return self._next()
+        return self._next(url)
 
     def get(self, url: str, headers: dict[str, str]) -> Any:
         self.gets.append(url)
@@ -84,6 +95,39 @@ def ack(client_id: str = "atlasX", status: str = "FILLED") -> dict[str, Any]:
         "status": status,
         "executedQty": "0.001",
     }
+
+
+def oco_reply(
+    stop_status: str = "NEW", target_status: str = "NEW"
+) -> Callable[[str], dict[str, Any]]:
+    """Answer an OCO request with both legs, keyed by the ids the request carried."""
+
+    def reply(url: str) -> dict[str, Any]:
+        query = parse_qs(urlparse(url).query)
+        stop_id = query["stopClientOrderId"][0]
+        target_id = query["limitClientOrderId"][0]
+        return {
+            "orderListId": 5150,
+            "listClientOrderId": query["listClientOrderId"][0],
+            "orderReports": [
+                {
+                    "clientOrderId": stop_id,
+                    "orderId": 201,
+                    "symbol": "BTCUSDT",
+                    "status": stop_status,
+                    "executedQty": "0",
+                },
+                {
+                    "clientOrderId": target_id,
+                    "orderId": 202,
+                    "symbol": "BTCUSDT",
+                    "status": target_status,
+                    "executedQty": "0",
+                },
+            ],
+        }
+
+    return reply
 
 
 def make_broker(
@@ -291,7 +335,7 @@ def test_entry_and_stop_placed_together(
     db: Database, audit: AuditLog, killswitch: KillSwitch
 ) -> None:
     killswitch.initialise()
-    transport = StubTransport(ack("entry"), ack("stop", status="NEW"))
+    transport = StubTransport(ack("entry"), oco_reply())
     broker = make_broker(db, audit, killswitch, transport)
 
     result = open_bracketed_position(
@@ -306,10 +350,18 @@ def test_entry_and_stop_placed_together(
         stop_price=D("95"),
         reference_price=D("100"),
         target_price=D("110"),
+        filters=FILTERS,
     )
-    assert len(transport.posts) == 2
+    assert len(transport.posts) == 2, "the entry, then one OCO carrying both exits"
     assert result.entry.client_order_id == "entry"
-    assert result.stop.client_order_id == "stop"
+
+    # The exit is a single order list: two independent sells cannot both stand against
+    # one holding, because the first locks the base asset.
+    assert "order/oco" in transport.posts[1]
+    assert result.stop.client_order_id != result.take_profit.client_order_id
+    assert result.exit_orders.order_list_id == "5150"
+    assert result.stop_price == D("95")
+    assert result.target_price == D("110")
 
 
 def test_failed_stop_reverses_the_entry(
@@ -337,6 +389,7 @@ def test_failed_stop_reverses_the_entry(
             stop_price=D("95"),
             reference_price=D("100"),
             target_price=D("110"),
+            filters=FILTERS,
         )
     assert len(transport.posts) == 3, "entry, failed stop, reversal"
 
@@ -366,12 +419,13 @@ def test_failed_reversal_raises_unprotected_position(
             stop_price=D("95"),
             reference_price=D("100"),
             target_price=D("110"),
+            filters=FILTERS,
         )
 
 
 def test_short_bracket_inverts_sides(db: Database, audit: AuditLog, killswitch: KillSwitch) -> None:
     killswitch.initialise()
-    transport = StubTransport(ack("entry"), ack("stop", status="NEW"))
+    transport = StubTransport(ack("entry"), oco_reply())
     broker = make_broker(db, audit, killswitch, transport)
     open_bracketed_position(
         broker,
@@ -385,6 +439,7 @@ def test_short_bracket_inverts_sides(db: Database, audit: AuditLog, killswitch: 
         stop_price=D("105"),
         reference_price=D("100"),
         target_price=D("90"),
+        filters=FILTERS,
     )
     assert "side=SELL" in transport.posts[0]
     assert "side=BUY" in transport.posts[1]

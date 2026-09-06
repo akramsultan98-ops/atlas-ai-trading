@@ -264,6 +264,7 @@ class TradingService:
                     stop_price=signal.stop_price,
                     reference_price=signal.reference_price,
                     target_price=signal.target_price,
+                    filters=symbol_filters,
                 )
                 result.entries_placed += 1
                 open_symbols.add(spec.symbol)
