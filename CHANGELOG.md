@@ -5,6 +5,17 @@ versions by implementation phase rather than semver until Phase 11.
 
 ## [Unreleased]
 
+### Deployment, monitoring, security and economic provenance
+- Dockerfile (non-root, volume-backed state, HEALTHCHECK, no default `run`),
+  compose file with bounded resources, hardened systemd unit
+- Single-row heartbeat written on success and failure alike; `atlas health` exits
+  0/1 for orchestrators, and an armed kill switch is not treated as unhealthy
+- `atlas.economics`: ASSUMPTION / OBSERVED / FIXTURE provenance for every economic
+  input, with `is_exchange_verified` false while any input remains assumed
+- Security audit findings locked into tests: two-variable live gate, SecretStr
+  credentials, no code execution, no shell, parameterised SQL, research-plane
+  isolation, no withdrawal path
+
 ### Exchange layer wired (Phases B–G)
 - `UrllibBrokerTransport`: signed Binance REST over the standard library, with
   bounded retries, terminal-vs-retryable classification and query-string redaction

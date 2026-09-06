@@ -69,6 +69,42 @@ python -m atlas.cli audit tail -n 50
 A verification failure means the log was modified or truncated. Treat as a security
 incident: arm the kill switch and investigate before trading.
 
+## Deployment
+
+### Docker
+
+```bash
+cp .env.example .env          # fill in; never committed
+docker compose -f deploy/docker-compose.yml --env-file .env up -d
+docker compose -f deploy/docker-compose.yml logs -f
+```
+
+The image does not default to `run` — starting a trader is an act by whoever launches
+the container. State lives in the `atlas-data` volume; losing it loses the ledger, the
+audit chain and the kill-switch state.
+
+### systemd
+
+```bash
+sudo cp deploy/atlas.service /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now atlas
+sudo journalctl -u atlas -f
+```
+
+`Restart=always` with `StartLimitBurst=5` throttles a crash loop. `KillSignal=SIGINT`
+lets the scheduler shut down gracefully. Restart is safe because startup recovery
+reconciles against the exchange before entries resume.
+
+### Health
+
+```bash
+atlas health              # exit 0 healthy, 1 stale
+atlas health --quiet      # exit code only; used as the container HEALTHCHECK
+```
+
+An armed kill switch is **not** unhealthy: the process is alive and deliberately not
+trading, and restarting it would achieve nothing.
+
 ## Binance Testnet procedure
 
 Not yet executed. `testnet.binance.vision` is unreachable from the development

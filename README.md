@@ -62,6 +62,9 @@ Evidence tiers are distinct and are not interchangeable:
 | Fill ingestion, ledger, positions | INTEGRATION TESTED |
 | Monitoring, retirement, supervisor | INTEGRATION TESTED |
 | Runtime service, scheduler, recovery, CLI | INTEGRATION TESTED |
+| Heartbeat and health reporting | INTEGRATION TESTED |
+| Deployment (Docker, systemd) | IMPLEMENTED — artefacts static-checked, image never built |
+| Economic inputs (fees, slippage, filters) | **ASSUMPTIONS ONLY** — see `atlas.economics` |
 | **Anything requiring Binance** | **NOT TESTED — see below** |
 
 **Nothing in ATLAS has ever contacted a Binance endpoint.** No TESTNET VERIFIED or
@@ -69,7 +72,7 @@ LIVE VERIFIED component exists. The development environment's egress policy retu
 `403` at the tunnel for both `testnet.binance.vision:443` and `api.binance.com:443`,
 so every exchange interaction to date has been against a scripted stub.
 
-512 tests, 89% coverage, ruff and mypy strict clean, GitHub Actions green.
+565 tests, 88% coverage, ruff and mypy strict clean, GitHub Actions green.
 Verify with `./scripts/ci-local.sh`, which runs the exact steps and command forms CI uses.
 
 **No real-money trading.** No exchange credentials exist in this project, the account is
