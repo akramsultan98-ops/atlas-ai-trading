@@ -48,7 +48,7 @@ Gates reject terminally. Phases 1–6 contain no LLM and no network write path.
 | 4 | Backtest engine | ✅ complete |
 | 5 | Verification and selection | ✅ complete |
 | 6 | Risk and sizing | ✅ complete |
-| 7 | Research loop | ⬜ pending |
+| 7 | Research loop | ✅ complete |
 | 8 | Incubation and promotion | ⬜ pending |
 | 9 | Execution | ⬜ pending |
 | 10 | Monitoring and retirement | ⬜ pending |

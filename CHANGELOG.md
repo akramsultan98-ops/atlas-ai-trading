@@ -5,6 +5,20 @@ versions by implementation phase rather than semver until Phase 11.
 
 ## [Unreleased]
 
+### Phase 7 — Research loop (first LLM contact)
+- Advisory tool surface as an explicit allowlist; control-plane verbs named in a
+  companion denylist so a regression is a failing test (AI-02)
+- Static tests: no research module names a credential field, imports an
+  execution module, or calls `eval`/`exec`/`compile` (AI-01, AI-02, AI-06)
+- Read-only database role for the advisory plane, enforced by SQLite (AI-03)
+- `ResearchLoop`: generate → validate → backtest → verify → gate → persist, whose
+  terminal state is VERIFIED and never LIVE (AI-05)
+- Every pass audited with model id, prompt hash and output hash (AI-07)
+- Anthropic SDK is an optional extra; the control plane imports and runs without
+  it (AI-08)
+- Generation prompt kept deliberately short, per the source's own observation that
+  more instruction produced worse results
+
 ### Phase 6 — Risk engine completed
 - Live `exchangeInfo` filter fetch and daily-refresh cache; a symbol missing any
   required filter raises rather than sizing against assumed values (RISK-09)
