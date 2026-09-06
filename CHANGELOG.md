@@ -5,6 +5,15 @@ versions by implementation phase rather than semver until Phase 11.
 
 ## [Unreleased]
 
+### Phase 6 — Risk engine completed
+- Live `exchangeInfo` filter fetch and daily-refresh cache; a symbol missing any
+  required filter raises rather than sizing against assumed values (RISK-09)
+- Portfolio-level limits: daily loss and drawdown-from-peak, each mapped to its
+  kill-switch trigger (RISK-05, RISK-06, KILL-02)
+- Drawdown takes precedence over daily loss when both breach, so the more
+  serious condition is the recorded reason
+- One position per symbol (RISK-08)
+
 ### Phase 5 — Independent verification and selection
 - Second backtest engine written independently of the primary: forward-scan
   rather than a bar state machine, indicators recomputed from first principles,
