@@ -13,7 +13,7 @@ from pathlib import Path
 
 from atlas.errors import PersistenceError
 
-SCHEMA_VERSION = "1"
+SCHEMA_VERSION = "2"
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 
@@ -25,11 +25,24 @@ def _configure(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA busy_timeout = 5000")
 
 
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Bring an existing database up to the current shape.
+
+    `CREATE TABLE IF NOT EXISTS` silently leaves an older table alone, so a column
+    added to schema.sql never reaches a database that already exists. Each step is
+    idempotent and checks for its own effect rather than trusting a version number.
+    """
+    columns = {str(r["name"]) for r in conn.execute("PRAGMA table_info(orders)")}
+    if columns and "position_id" not in columns:
+        conn.execute("ALTER TABLE orders ADD COLUMN position_id TEXT")
+
+
 def connect(path: Path) -> sqlite3.Connection:
     """Open a read-write connection, creating the schema if absent."""
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, isolation_level=None)
     _configure(conn)
+    _migrate(conn)
     conn.executescript(_SCHEMA_PATH.read_text())
     conn.execute(
         "INSERT INTO schema_meta(key, value) VALUES('schema_version', ?) "

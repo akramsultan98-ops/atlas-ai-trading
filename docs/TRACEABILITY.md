@@ -144,3 +144,16 @@ Each unit test passed; the system they formed did not meet the requirement.
 | Partial valuation never priced or persisted | `AccountState.valuation_complete`, `record_equity` refusal | `test_valuation.py::test_incomplete_valuation_is_never_persisted`, `::test_a_tick_that_cannot_price_a_position_records_no_snapshot` |
 | Armed switch outranks a suspension | `TradingService.tick` ordering | `test_valuation.py::test_an_armed_switch_outranks_a_suspension` |
 | Preflight proves filters and clock before trading | `AtlasService.preflight` | `test_valuation.py::test_preflight_reports_the_real_symbol_filters`, `::test_preflight_names_clock_drift_for_what_it_is` |
+
+## Position lifecycle
+
+| Requirement | Implementation | Test |
+|---|---|---|
+| EXEC-02 entry and stop recorded, not just sent | `open_bracketed_position` writes orders before placing them | `test_position_lifecycle.py::test_both_orders_are_on_file_and_linked_to_the_position` |
+| Position opened at the filled price | `brackets._fill_price` | `test_position_lifecycle.py::test_the_position_records_the_price_it_filled_at` |
+| EXEC-04 exit fill closes the position | `FillIngestor._close_if_exit_filled` | `test_position_lifecycle.py::test_a_filled_stop_closes_the_position`, `::test_a_partial_exit_fill_closes_nothing` |
+| EXEC-05 restart does not arm on ATLAS's own orders | order rows exist for reconciliation to match | `test_position_lifecycle.py::test_a_restart_after_an_entry_does_not_arm_the_kill_switch` |
+| Ambiguous transmission stays open for reconciliation | `brackets._record_failure` | `test_position_lifecycle.py::test_an_ambiguous_send_stays_open_for_reconciliation` |
+| RISK-08 binds on a real open position | `Ledger.open_symbols` fed by the entry path | `test_position_lifecycle.py::test_the_symbol_is_now_blocked_for_re_entry` |
+| MON-01..06 see realised returns | `Ledger.realised_returns` fed by position closes | `test_position_lifecycle.py::test_the_monitor_can_finally_see_a_realised_return` |
+| Schema migration reaches existing databases | `db/engine.py::_migrate` | `test_position_lifecycle.py::test_the_position_link_survives_a_reopened_database` |

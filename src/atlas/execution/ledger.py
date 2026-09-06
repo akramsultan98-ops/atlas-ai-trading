@@ -108,6 +108,31 @@ class Ledger:
             )
         return order_id
 
+    def link_order_to_position(self, client_order_id: str, position_id: str) -> None:
+        """Attach an order to the position it belongs to.
+
+        Set after the entry fills, on the entry and on every protective order, so an
+        exit fill can be resolved to the position it closes.
+        """
+        with self._db.transaction() as conn:
+            conn.execute(
+                "UPDATE orders SET position_id = ?, updated_at = ? WHERE client_order_id = ?",
+                (position_id, utcnow().isoformat(), client_order_id),
+            )
+
+    def order_row(self, client_order_id: str) -> dict[str, object] | None:
+        """The stored order, or None when ATLAS has no record of it."""
+        row = self._db.connection.execute(
+            "SELECT * FROM orders WHERE client_order_id = ?", (client_order_id,)
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def position(self, position_id: str) -> Position | None:
+        row = self._db.connection.execute(
+            "SELECT * FROM positions WHERE id = ?", (position_id,)
+        ).fetchone()
+        return self._row_to_position(row) if row is not None else None
+
     def update_order_status(self, client_order_id: str, status: str) -> None:
         with self._db.transaction() as conn:
             conn.execute(
@@ -227,6 +252,15 @@ class Ledger:
                 (utcnow().isoformat(), str(exit_price), str(pnl), position_id),
             )
         return pnl
+
+    def deployed_notional(self, prices: dict[str, Decimal]) -> Decimal:
+        """Marked value of every open position. Symbols with no price are excluded."""
+        total = ZERO
+        for position in self.open_positions():
+            price = prices.get(position.symbol)
+            if price is not None:
+                total += position.quantity * price
+        return total
 
     def open_positions(self, strategy_id: str | None = None) -> list[Position]:
         query = "SELECT * FROM positions WHERE closed_at IS NULL"

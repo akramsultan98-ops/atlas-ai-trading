@@ -25,6 +25,7 @@ from atlas.db.engine import Database
 from atlas.errors import AtlasError, ConfigurationError, KillSwitchArmedError
 from atlas.execution.brackets import open_bracketed_position
 from atlas.execution.broker import BinanceSpotBroker, OrderRejection
+from atlas.execution.ledger import Ledger
 from atlas.execution.reconcile import Reconciler
 from atlas.killswitch import KillSwitch
 from atlas.models import AuditEventType, KillSwitchTrigger, StrategyStatus, utcnow
@@ -80,6 +81,7 @@ class TradingService:
         self._policy = policy
         self._filters = filters
         self._limits = limits or PortfolioLimits()
+        self._ledger = Ledger(db, audit)
         self._registry = StrategyRegistry(db)
         self._supervisor = Supervisor(db, audit)
         self._reconciler = Reconciler(db, audit, killswitch)
@@ -253,12 +255,15 @@ class TradingService:
                 open_bracketed_position(
                     self._broker,
                     self._audit,
+                    self._ledger,
                     strategy_id=strategy_id,
                     signal_bar_time=series.bars[last_index].open_time,
                     symbol=spec.symbol,
                     side=signal.side,
                     quantity=sizing.quantity,
                     stop_price=signal.stop_price,
+                    reference_price=signal.reference_price,
+                    target_price=signal.target_price,
                 )
                 result.entries_placed += 1
                 open_symbols.add(spec.symbol)

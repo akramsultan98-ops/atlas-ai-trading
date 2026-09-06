@@ -144,12 +144,19 @@ CREATE TABLE IF NOT EXISTS orders (
     price             TEXT,
     status            TEXT NOT NULL,
     exchange_env      TEXT NOT NULL CHECK (exchange_env IN ('testnet', 'live')),
+    -- The position this order belongs to. NULL until the entry fills, because an
+    -- order is recorded before it is sent (an order that vanishes mid-flight must
+    -- still leave a local record, or reconciliation reads it as unrecorded
+    -- exposure). Set on both the entry and its protective orders, so an exit fill
+    -- can close the position it actually belongs to.
+    position_id       TEXT,
     created_at        TEXT NOT NULL,
     updated_at        TEXT NOT NULL
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS idx_orders_strategy ON orders(strategy_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_orders_status   ON orders(status);
+CREATE INDEX IF NOT EXISTS idx_orders_position ON orders(position_id);
 
 CREATE TABLE IF NOT EXISTS fills (
     id          TEXT PRIMARY KEY,

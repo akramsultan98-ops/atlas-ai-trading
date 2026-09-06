@@ -20,7 +20,7 @@ from typing import Any
 import pytest
 from tests.test_backtest import FILTERS, NO_COSTS, POLICY
 from tests.test_evaluator import percent_spec
-from tests.test_execution import StubTransport, ack
+from tests.test_execution import StubTransport, _strategy, ack
 from tests.test_research_loop import StubClient, oscillating
 
 from atlas.audit import AuditLog
@@ -28,6 +28,7 @@ from atlas.backtest.engine import run_backtest
 from atlas.db.engine import Database
 from atlas.execution.brackets import open_bracketed_position
 from atlas.execution.broker import BinanceSpotBroker
+from atlas.execution.ledger import Ledger
 from atlas.execution.reconcile import Reconciler
 from atlas.incubation.divergence import IncubationThresholds, check_divergence
 from atlas.incubation.tracker import IncubationTracker
@@ -181,12 +182,15 @@ def test_full_pipeline_research_to_retirement(pipeline: dict[str, Any]) -> None:
     bracket = open_bracketed_position(
         broker,
         audit,
+        Ledger(db, audit),
         strategy_id=strategy_id,
         signal_bar_time=BAR_TIME,
         symbol="BTCUSDT",
         side=PositionSide.LONG,
         quantity=sizing.quantity,
         stop_price=D("95"),
+        reference_price=D("100"),
+        target_price=D("110"),
     )
     assert bracket.entry.status == "FILLED"
     assert len(transport.posts) == 2, "entry and its protective stop"
@@ -224,7 +228,7 @@ def test_full_pipeline_research_to_retirement(pipeline: dict[str, Any]) -> None:
 
 def test_kill_switch_halts_the_pipeline_mid_flight(pipeline: dict[str, Any]) -> None:
     """An armed kill switch stops new exposure everywhere, at any stage."""
-    audit, killswitch = pipeline["audit"], pipeline["killswitch"]
+    db, audit, killswitch = pipeline["db"], pipeline["audit"], pipeline["killswitch"]
 
     transport = StubTransport(ack("entry"), ack("stop", status="NEW"))
     broker = BinanceSpotBroker(
@@ -238,12 +242,15 @@ def test_kill_switch_halts_the_pipeline_mid_flight(pipeline: dict[str, Any]) -> 
         open_bracketed_position(
             broker,
             audit,
-            strategy_id="s1",
+            Ledger(db, audit),
+            strategy_id=_strategy(db),
             signal_bar_time=BAR_TIME,
             symbol="BTCUSDT",
             side=PositionSide.LONG,
             quantity=D("0.001"),
             stop_price=D("95"),
+            reference_price=D("100"),
+            target_price=D("110"),
         )
     assert transport.posts == [], "nothing reached the exchange"
 

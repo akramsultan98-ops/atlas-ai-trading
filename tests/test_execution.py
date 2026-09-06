@@ -22,6 +22,7 @@ from atlas.execution.broker import (
     classify_rejection,
 )
 from atlas.execution.idempotency import client_order_id
+from atlas.execution.ledger import Ledger
 from atlas.execution.reconcile import Reconciler
 from atlas.killswitch import KillSwitch
 from atlas.models import (
@@ -33,6 +34,17 @@ from atlas.models import (
 )
 
 D = Decimal
+
+
+def _strategy(db: Database) -> str:
+    """A registered strategy. Orders carry a foreign key to one, so it must exist."""
+    from tests.test_evaluator import percent_spec
+
+    from atlas.strategy.registry import StrategyRegistry
+
+    return StrategyRegistry(db).register(percent_spec())
+
+
 BAR_TIME = datetime(2026, 9, 6, 12, 0, tzinfo=UTC)
 
 
@@ -285,12 +297,15 @@ def test_entry_and_stop_placed_together(
     result = open_bracketed_position(
         broker,
         audit,
-        strategy_id="s1",
+        Ledger(db, audit),
+        strategy_id=_strategy(db),
         signal_bar_time=BAR_TIME,
         symbol="BTCUSDT",
         side=PositionSide.LONG,
         quantity=D("0.001"),
         stop_price=D("95"),
+        reference_price=D("100"),
+        target_price=D("110"),
     )
     assert len(transport.posts) == 2
     assert result.entry.client_order_id == "entry"
@@ -313,12 +328,15 @@ def test_failed_stop_reverses_the_entry(
         open_bracketed_position(
             broker,
             audit,
-            strategy_id="s1",
+            Ledger(db, audit),
+            strategy_id=_strategy(db),
             signal_bar_time=BAR_TIME,
             symbol="BTCUSDT",
             side=PositionSide.LONG,
             quantity=D("0.001"),
             stop_price=D("95"),
+            reference_price=D("100"),
+            target_price=D("110"),
         )
     assert len(transport.posts) == 3, "entry, failed stop, reversal"
 
@@ -339,12 +357,15 @@ def test_failed_reversal_raises_unprotected_position(
         open_bracketed_position(
             broker,
             audit,
-            strategy_id="s1",
+            Ledger(db, audit),
+            strategy_id=_strategy(db),
             signal_bar_time=BAR_TIME,
             symbol="BTCUSDT",
             side=PositionSide.LONG,
             quantity=D("0.001"),
             stop_price=D("95"),
+            reference_price=D("100"),
+            target_price=D("110"),
         )
 
 
@@ -355,12 +376,15 @@ def test_short_bracket_inverts_sides(db: Database, audit: AuditLog, killswitch: 
     open_bracketed_position(
         broker,
         audit,
-        strategy_id="s1",
+        Ledger(db, audit),
+        strategy_id=_strategy(db),
         signal_bar_time=BAR_TIME,
         symbol="BTCUSDT",
         side=PositionSide.SHORT,
         quantity=D("0.001"),
         stop_price=D("105"),
+        reference_price=D("100"),
+        target_price=D("90"),
     )
     assert "side=SELL" in transport.posts[0]
     assert "side=BUY" in transport.posts[1]

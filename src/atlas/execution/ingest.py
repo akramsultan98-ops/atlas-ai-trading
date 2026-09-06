@@ -34,6 +34,7 @@ class IngestReport:
     recorded: int = 0
     duplicates: int = 0
     orphans: list[str] = field(default_factory=list)
+    closed_positions: list[str] = field(default_factory=list)
 
     @property
     def had_orphans(self) -> bool:
@@ -84,6 +85,7 @@ class FillIngestor:
         recorded = 0
         duplicates = 0
         orphans: list[str] = []
+        closed_positions: list[str] = []
 
         for trade in trades:
             client_order_id = str(trade.get("clientOrderId", ""))
@@ -102,6 +104,9 @@ class FillIngestor:
             try:
                 if self._ledger.record_fill(fill):
                     recorded += 1
+                    closed = self._close_if_exit_filled(client_order_id, fill.price)
+                    if closed is not None:
+                        closed_positions.append(closed)
                 else:
                     duplicates += 1
             except ValueError:
@@ -114,6 +119,7 @@ class FillIngestor:
             recorded=recorded,
             duplicates=duplicates,
             orphans=orphans,
+            closed_positions=closed_positions,
         )
         self._audit.append(
             AuditEventType.RECONCILIATION,
@@ -124,10 +130,54 @@ class FillIngestor:
                 "recorded": report.recorded,
                 "duplicates": report.duplicates,
                 "orphans": report.orphans,
+                "closed_positions": report.closed_positions,
             },
             INGEST_ACTOR,
         )
         return report
+
+    def _close_if_exit_filled(self, client_order_id: str, price: Decimal) -> str | None:
+        """Close the position when its protective order has filled in full.
+
+        A stop or target filling *is* the position closing, and nothing else observes
+        it: the exchange sends no separate notification, and the order simply stops
+        appearing in openOrders. Without this the ledger holds the position open
+        forever, which blocks the symbol under RISK-08, overstates deployed capital and
+        marked equity, and starves the monitor of the realised return that decides
+        whether the strategy keeps trading.
+
+        A partial fill closes nothing. The remainder of the position is still held and
+        still protected by the unfilled remainder of the order.
+        """
+        row = self._ledger.order_row(client_order_id)
+        if row is None:
+            return None
+        if str(row.get("role")) not in {"STOP", "TARGET"}:
+            return None
+
+        position_id = row.get("position_id")
+        if not position_id:
+            return None
+        position = self._ledger.position(str(position_id))
+        if position is None or not position.is_open:
+            return None
+
+        if self._ledger.filled_quantity(client_order_id) < position.quantity:
+            return None
+
+        self._ledger.close_position(position.id, price)
+        self._audit.append(
+            AuditEventType.RECONCILIATION,
+            {
+                "event": "position_closed_by_fill",
+                "position_id": position.id,
+                "symbol": position.symbol,
+                "client_order_id": client_order_id,
+                "exit_price": str(price),
+            },
+            INGEST_ACTOR,
+        )
+        return str(position.id)
 
     def ingest_all(self, symbols: list[str]) -> list[IngestReport]:
         """Ingest every symbol. One symbol's failure must not stop the others."""

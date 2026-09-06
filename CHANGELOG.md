@@ -5,6 +5,42 @@ versions by implementation phase rather than semver until Phase 11.
 
 ## [Unreleased]
 
+### The ledger had no producer
+`Ledger.open_position` and `Ledger.close_position` had zero callers anywhere in
+`src/`. The positions table was never written by production code, so the ledger was a
+fully tested, entirely unfed data structure. Everything downstream of it was inert:
+
+- `open_symbols` was always empty, so RISK-08 never bound and a strategy could
+  re-enter the same symbol every tick
+- deployed capital and marked equity read zero however much was actually at risk
+- `realised_returns` stayed empty, so MON-01..06 could never retire anything
+- every trade from `myTrades` was an orphan, because no order was on file
+- reconciliation found ATLAS orders on the exchange with no local record and armed
+  `RECONCILIATION_FAILURE` -- on the first restart after any order existed
+
+`open_bracketed_position` now records the entry, the stop and any reversal in the
+ledger, opens the position at the price the entry *filled* at
+(`cummulativeQuoteQty / executedQty`, not the signalled bar close), and links every
+order to it. Orders are written before they are sent: an order accepted by the
+exchange whose response never arrives must still leave a local record, or
+reconciliation reads it as unrecorded exposure.
+
+`FillIngestor` closes a position when its protective order fills in full. Nothing else
+observes this -- the exchange sends no notification and the order simply stops
+appearing in `openOrders`. A partial fill closes nothing; the remainder is still held
+and still protected.
+
+A failed placement now records what it actually knows: `NOT_SENT` when the kill switch
+refused it before any network call, `REJECTED` when the exchange answered terminally,
+and left `SUBMITTED` when retries were exhausted against a transport fault -- that last
+one may be live, and erasing it would hide a real order from reconciliation.
+
+An entry that fills nothing no longer has a stop placed against it, and a reversed
+entry closes its position rather than leaving a row that blocks the symbol forever.
+
+`orders.position_id` is new; existing databases are migrated on open, since
+`CREATE TABLE IF NOT EXISTS` leaves an older table alone.
+
 ### Pre-testnet integration fixes
 Three requirements held in their components and failed in the assembled system.
 
