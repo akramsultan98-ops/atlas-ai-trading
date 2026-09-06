@@ -14,13 +14,16 @@ import hashlib
 import hmac
 import json
 import time
+import urllib.error
 import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
 from typing import Any, Protocol
 
 from atlas.audit import AuditLog
+from atlas.data.klines import MarketDataError
 from atlas.errors import AtlasError
 from atlas.killswitch import KillSwitch
 from atlas.models import AuditEventType, ExchangeEnv, OrderSide
@@ -80,6 +83,82 @@ class BrokerTransport(Protocol):
     def post(self, url: str, headers: dict[str, str]) -> Any: ...
     def get(self, url: str, headers: dict[str, str]) -> Any: ...
     def delete(self, url: str, headers: dict[str, str]) -> Any: ...
+
+
+class UrllibBrokerTransport:
+    """Standard-library signed HTTP transport for the Binance REST API.
+
+    Mirrors `atlas.data.klines.UrllibTransport` in shape: the retry policy lives in the
+    verb methods and the single HTTP call is isolated in `_request`, so the loop is
+    testable without a network.
+
+    Retries only transient conditions - timeouts, connection errors, 429 and 5xx. A 4xx
+    other than 429 is a request defect: Binance has refused it on its merits, and
+    resending burns rate limit while delaying the real fix (EXEC-09).
+
+    Secrets never reach a log or an exception. The API key travels in a header, the
+    signature in the query string, and both `_redact` and the error path strip the query
+    before any URL appears in a message.
+    """
+
+    def __init__(self, timeout: float = 15.0, retries: int = 3, backoff_base: float = 2.0) -> None:
+        self.timeout = timeout
+        self.retries = retries
+        self.backoff_base = backoff_base
+
+    @staticmethod
+    def _redact(url: str) -> str:
+        """Strip the query string, which carries the signature and API parameters."""
+        return url.split("?", 1)[0]
+
+    def _request(self, method: str, url: str, headers: dict[str, str]) -> Any:
+        """Perform one HTTP request. Overridden in tests; carries no retry policy."""
+        request = urllib.request.Request(url, headers=headers, method=method)
+        with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            body = response.read().decode("utf-8")
+        return json.loads(body) if body else {}
+
+    def _call(self, method: str, url: str, headers: dict[str, str]) -> Any:
+        last_error: Exception | None = None
+
+        for attempt in range(self.retries):
+            try:
+                return self._request(method, url, headers)
+            except urllib.error.HTTPError as exc:
+                # Binance returns its error code and message in the body; read it before
+                # deciding, so classify_rejection can distinguish terminal from transient.
+                try:
+                    body = exc.read().decode("utf-8")
+                except Exception:  # pragma: no cover - body already consumed
+                    body = ""
+                rejection = classify_rejection(exc.code, body)
+                if not rejection.retryable:
+                    raise rejection from None
+                last_error = rejection
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                last_error = exc
+            except json.JSONDecodeError as exc:
+                # A malformed body is not retryable: the exchange answered, unusably.
+                raise MarketDataError(
+                    f"unparseable response from {self._redact(url)}: {exc}"
+                ) from exc
+
+            if attempt < self.retries - 1 and self.backoff_base > 0:
+                time.sleep(self.backoff_base**attempt)
+
+        raise OrderRejection(
+            f"{method} {self._redact(url)} failed after {self.retries} attempts: {last_error}",
+            retryable=True,
+        )
+
+    def post(self, url: str, headers: dict[str, str]) -> Any:
+        return self._call("POST", url, headers)
+
+    def get(self, url: str, headers: dict[str, str]) -> Any:
+        return self._call("GET", url, headers)
+
+    def delete(self, url: str, headers: dict[str, str]) -> Any:
+        return self._call("DELETE", url, headers)
 
 
 class BinanceSpotBroker:
@@ -221,6 +300,52 @@ class BinanceSpotBroker:
         params: dict[str, Any] = {"symbol": symbol.upper()} if symbol else {}
         raw = self._require_transport().get(
             f"{self.base_url}/api/v3/openOrders?{self._signed_query(params)}", self._headers()
+        )
+        return list(raw) if isinstance(raw, list) else []
+
+    def server_time(self) -> int:
+        """Unsigned connectivity check. Returns the exchange's server time in ms.
+
+        Used at startup to prove the endpoint is reachable before anything is signed,
+        so a network fault is distinguishable from a credential fault.
+        """
+        raw = self._require_transport().get(f"{self.base_url}/api/v3/time", self._headers())
+        if not isinstance(raw, dict) or "serverTime" not in raw:
+            raise AtlasError(f"unexpected /time response from {self.base_url}")
+        return int(raw["serverTime"])
+
+    def exchange_info(self, symbol: str) -> dict[str, Any]:
+        """Unsigned symbol metadata, including the filters sizing depends on."""
+        raw = self._require_transport().get(
+            f"{self.base_url}/api/v3/exchangeInfo?symbol={symbol.upper()}", self._headers()
+        )
+        if not isinstance(raw, dict):
+            raise AtlasError(f"unexpected exchangeInfo response for {symbol}")
+        return raw
+
+    def order_status(self, symbol: str, client_order_id: str) -> dict[str, Any]:
+        """Signed lookup of a single order by client order id (EXEC-04).
+
+        The disambiguator after an ambiguous submission: rather than resubmitting and
+        risking a duplicate, ask the exchange whether the order it already has.
+        """
+        query = self._signed_query({"symbol": symbol.upper(), "origClientOrderId": client_order_id})
+        raw = self._require_transport().get(
+            f"{self.base_url}/api/v3/order?{query}", self._headers()
+        )
+        return dict(raw) if isinstance(raw, dict) else {}
+
+    def my_trades(self, symbol: str, from_id: int | None = None) -> list[dict[str, Any]]:
+        """Signed trade history for fill ingestion.
+
+        `from_id` pages forward from the last trade already ingested. Overlap is
+        harmless because ingestion is idempotent on the exchange trade id.
+        """
+        params: dict[str, Any] = {"symbol": symbol.upper(), "limit": 1000}
+        if from_id is not None:
+            params["fromId"] = from_id
+        raw = self._require_transport().get(
+            f"{self.base_url}/api/v3/myTrades?{self._signed_query(params)}", self._headers()
         )
         return list(raw) if isinstance(raw, list) else []
 

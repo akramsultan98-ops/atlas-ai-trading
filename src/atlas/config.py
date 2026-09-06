@@ -98,6 +98,17 @@ class Settings(BaseSettings):
     exchange_env: ExchangeEnv = ExchangeEnv.TESTNET
     quote_asset: str = "USDT"
 
+    # Runtime. Symbols is a comma-separated list, e.g. "BTCUSDT,ETHUSDT".
+    symbols: str = "BTCUSDT"
+    timeframe: str = "1h"
+    tick_interval_seconds: int = 900
+    history_bars: int = 500
+
+    # Alerting. Absent values disable notification rather than failing startup:
+    # a missing Telegram token must never stop trading or retirement.
+    telegram_bot_token: SecretStr | None = None
+    telegram_chat_id: str | None = None
+
     # Execution plane only. Never read by the research plane (AI-01).
     binance_api_key: SecretStr | None = None
     binance_api_secret: SecretStr | None = None
@@ -122,6 +133,31 @@ class Settings(BaseSettings):
     @property
     def is_live(self) -> bool:
         return self.exchange_env is ExchangeEnv.LIVE
+
+    @property
+    def symbol_list(self) -> list[str]:
+        return [s.strip().upper() for s in self.symbols.split(",") if s.strip()]
+
+    def notifications_enabled(self) -> bool:
+        return self.telegram_bot_token is not None and self.telegram_chat_id is not None
+
+    def describe(self) -> dict[str, str]:
+        """Startup summary. Contains no secret material, by construction.
+
+        Credentials are reported as presence only - never a prefix, length or hash,
+        since any of those narrows a search.
+        """
+        return {
+            "env": str(self.env),
+            "exchange_env": str(self.exchange_env),
+            "quote_asset": self.quote_asset,
+            "symbols": ",".join(self.symbol_list),
+            "timeframe": self.timeframe,
+            "tick_interval_seconds": str(self.tick_interval_seconds),
+            "data_dir": str(self.data_dir),
+            "exchange_credentials": "present" if self.has_exchange_credentials() else "absent",
+            "notifications": "enabled" if self.notifications_enabled() else "disabled",
+        }
 
     def has_exchange_credentials(self) -> bool:
         return self.binance_api_key is not None and self.binance_api_secret is not None

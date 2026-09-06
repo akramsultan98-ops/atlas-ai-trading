@@ -12,6 +12,9 @@ dependencies = [
     "pydantic-settings>=2.6,<3",
 ]
 
+[project.scripts]
+atlas = "atlas.cli:main"
+
 [project.optional-dependencies]
 # The advisory plane only. The control plane must run without it (AI-08).
 research = [

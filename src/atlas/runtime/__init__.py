@@ -2,9 +2,11 @@
 
 from atlas.runtime.recovery import RecoveryReport, recover
 from atlas.runtime.scheduler import Clock, IntervalScheduler, SystemClock, TickReport
+from atlas.runtime.service import AtlasService, build_service
 from atlas.runtime.trading_service import TickResult, TradingService
 
 __all__ = [
+    "AtlasService",
     "Clock",
     "IntervalScheduler",
     "RecoveryReport",
@@ -12,5 +14,6 @@ __all__ = [
     "TickReport",
     "TickResult",
     "TradingService",
+    "build_service",
     "recover",
 ]

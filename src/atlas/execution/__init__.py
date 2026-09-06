@@ -12,9 +12,11 @@ from atlas.execution.broker import (
     OrderRejection,
     OrderRequest,
     OrderRole,
+    UrllibBrokerTransport,
     classify_rejection,
 )
 from atlas.execution.idempotency import client_order_id
+from atlas.execution.ingest import FillIngestor, IngestReport
 from atlas.execution.ledger import Fill, Ledger, Position
 from atlas.execution.reconcile import Reconciler, ReconciliationReport
 
@@ -23,6 +25,8 @@ __all__ = [
     "BracketResult",
     "BrokerTransport",
     "Fill",
+    "FillIngestor",
+    "IngestReport",
     "Ledger",
     "OrderAck",
     "OrderRejection",
@@ -32,6 +36,7 @@ __all__ = [
     "Reconciler",
     "ReconciliationReport",
     "UnprotectedPositionError",
+    "UrllibBrokerTransport",
     "classify_rejection",
     "client_order_id",
     "open_bracketed_position",
