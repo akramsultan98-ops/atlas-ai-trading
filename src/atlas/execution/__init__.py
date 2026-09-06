@@ -27,6 +27,7 @@ __all__ = [
     "OrderRole",
     "Reconciler",
     "ReconciliationReport",
+    "UnprotectedPositionError",
     "classify_rejection",
     "client_order_id",
     "open_bracketed_position",
