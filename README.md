@@ -46,7 +46,7 @@ Gates reject terminally. Phases 1–6 contain no LLM and no network write path.
 | 2 | Market data | ✅ complete |
 | 3 | Strategy representation | ✅ complete |
 | 4 | Backtest engine | ✅ complete |
-| 5 | Verification and selection | ⬜ pending |
+| 5 | Verification and selection | ✅ complete |
 | 6 | Risk and sizing | 🟡 sizing done (BT-05); portfolio limits + live filters pending |
 | 7 | Research loop | ⬜ pending |
 | 8 | Incubation and promotion | ⬜ pending |

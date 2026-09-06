@@ -5,6 +5,17 @@ versions by implementation phase rather than semver until Phase 11.
 
 ## [Unreleased]
 
+### Phase 5 — Independent verification and selection
+- Second backtest engine written independently of the primary: forward-scan
+  rather than a bar state machine, indicators recomputed from first principles,
+  no shared code (VER-01)
+- Cross-engine comparison with relative tolerances; a mismatch rejects the
+  candidate and raises a suspected engine defect (VER-02, VER-03)
+- Selection gates SEL-01..07 with all thresholds in configuration, since the
+  source supplies criteria but no numbers
+- All gates evaluated rather than short-circuited, so rejection reasons stay
+  analysable in aggregate
+
 ### Phase 4 — Backtest engine
 - Event-driven engine: next-open fills (BT-03), pessimistic stop-vs-target
   resolution (BT-06), entry bar cannot also exit

@@ -31,6 +31,40 @@ at the close of each phase.
 | VER-04 chronological out-of-sample split | `KlineSeries.split_chronological` | `test_data_models.py::test_chronological_split_preserves_order` |
 | ADR-003 Decimal prices through the cache | `atlas/data/store.py` | `test_data_store.py::test_round_trip_preserves_decimal_precision` |
 
-## Phases 3–11
+## Phase 3 — Strategy representation
+
+| Requirement | Implementation | Test |
+|---|---|---|
+| STRAT-01 strategies are data, not code | `atlas/strategy/spec.py::StrategySpec` | `test_strategy_spec.py::test_valid_spec_constructs` |
+| STRAT-04 trailing stops unrepresentable | `StopRule` has no such field | `test_strategy_spec.py::test_spec_has_no_trailing_stop_field` |
+| STRAT-05 pure deterministic evaluation | `atlas/strategy/evaluator.py::evaluate` | `test_evaluator.py::test_evaluation_is_deterministic`, `::test_evaluation_does_not_read_forward` |
+| STRAT-06 content-hash versioning | `StrategySpec.content_hash`, `StrategyRegistry` | `test_strategy_registry.py::test_registering_identical_spec_is_idempotent` |
+| STRAT-07 fixed indicator library | `atlas/strategy/indicators.py` | `test_indicators.py::test_unknown_indicator_rejected`, `::test_indicators_never_read_forward` |
+| MON-06 retirement is one-way | `StrategyRegistry.set_status` | `test_strategy_registry.py::test_retirement_is_one_way` |
+
+## Phase 4 — Backtest engine and sizing
+
+| Requirement | Implementation | Test |
+|---|---|---|
+| BT-02 look-ahead guard | `atlas/backtest/guard.py::GuardedBars` | `test_backtest.py::test_guard_raises_on_forward_read` |
+| BT-03 next-open fills | `atlas/backtest/engine.py` | `test_backtest.py::test_fill_is_at_next_bar_open_not_signal_close` |
+| BT-04 costs | `atlas/backtest/costs.py::CostModel` | `test_backtest.py::test_costs_reduce_net_pnl` |
+| BT-05 live sizing inside backtest | `run_backtest` calls `size_position` | `test_backtest.py::test_unsizeable_signal_is_rejected_not_forced` |
+| BT-06 pessimistic stop-vs-target | `_resolve_exit` | `test_backtest.py::test_both_touched_resolves_to_the_stop` |
+| BT-07 statistics | `atlas/backtest/stats.py` | `test_backtest.py::test_max_drawdown_computation` |
+| BT-08 provenance | `BacktestResult` | `test_backtest.py::test_result_records_provenance` |
+| RISK-01..04, 09 sizing | `atlas/risk/sizing.py::size_position` | `test_sizing.py` (28 cases incl. property test) |
+| Section 6 feasible band | `feasible_stop_band` | `test_sizing.py::test_feasible_band_matches_specification_table` |
+
+## Phase 5 — Verification and selection
+
+| Requirement | Implementation | Test |
+|---|---|---|
+| VER-01 independent engine | `atlas/verify/vector_engine.py` | `test_verify.py::test_engines_agree_on_a_real_strategy`, `::test_verifier_shares_no_engine_code` |
+| VER-02 tolerances | `atlas/verify/compare.py::compare` | `test_verify.py::test_injected_divergence_is_caught` |
+| VER-03 engine-defect alert | `VerificationOutcome.engine_defect_suspected` | `test_verify.py::test_trade_count_divergence_is_caught` |
+| SEL-01..07 gates | `atlas/selection/gates.py::evaluate_gates` | `test_selection.py` (23 cases) |
+
+## Phases 6–11
 
 Populated as each phase completes.
