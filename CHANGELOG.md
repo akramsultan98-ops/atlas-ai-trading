@@ -5,6 +5,18 @@ versions by implementation phase rather than semver until Phase 11.
 
 ## [Unreleased]
 
+### Phase 8 — Incubation and promotion
+- Zero-capital incubation tracker resolving paper signals pessimistically, the
+  same rule the backtest uses (INC-01..03)
+- Backtest-vs-live divergence scoring: profit-factor retention and drawdown
+  multiple, all reasons reported together (INC-04, INC-05)
+- Pearson correlation gate against the live book, which is what makes the
+  concurrency limit mean anything (PROM-02)
+- Promotion requires explicit human approval and a named approver, refuses any
+  strategy not currently INCUBATING, and records an immutable evidence snapshot
+  (PROM-01, PROM-04)
+- Reduced risk multiplier for a newly promoted strategy's first trades (PROM-03)
+
 ### Phase 7 — Research loop (first LLM contact)
 - Advisory tool surface as an explicit allowlist; control-plane verbs named in a
   companion denylist so a regression is a failing test (AI-02)
