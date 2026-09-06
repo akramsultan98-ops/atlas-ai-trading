@@ -1,0 +1,36 @@
+# ATLAS V2, containerised.
+#
+#   docker compose --env-file ../.env up -d
+#
+# The .env file is never baked into the image; it is read at run time and stays on the
+# host. `restart: unless-stopped` is deliberate: an unattended trader that dies at 3am
+# should come back, and startup recovery reconciles before it resumes entries.
+services:
+  atlas:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: atlas:local
+    container_name: atlas
+    restart: unless-stopped
+    command: ["run"]
+    env_file:
+      - ../.env
+    volumes:
+      # Persistent state. Losing this loses the ledger, audit chain and kill switch.
+      - atlas-data:/data
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+    # A runaway process must not take the host down with it.
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+
+volumes:
+  atlas-data:

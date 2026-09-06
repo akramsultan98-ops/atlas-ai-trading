@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+from typing import Any
 
 from atlas.audit import AuditLog
 from atlas.config import load_settings
@@ -42,6 +43,15 @@ def main(argv: list[str] | None = None) -> int:
     pf = sub.add_parser("preflight", help="verify exchange reachability and environment")
     pf.add_argument("--json", action="store_true")
 
+    hc = sub.add_parser("health", help="report service health (for orchestrators)")
+    hc.add_argument("--quiet", action="store_true", help="exit code only, no output")
+    hc.add_argument(
+        "--max-age",
+        type=int,
+        default=0,
+        help="heartbeat staleness tolerance in seconds; 0 = 3x the tick interval",
+    )
+
     rn = sub.add_parser("run", help="start the ATLAS trading service")
     rn.add_argument("--ticks", type=int, default=0, help="0 = run until stopped")
     rn.add_argument("--once", action="store_true", help="run a single tick and exit")
@@ -54,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
 
-    if args.group in ("preflight", "run"):
+    if args.group in ("preflight", "run", "health"):
         return _runtime_command(args)
 
     try:
@@ -97,6 +107,39 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def _health(service: Any, args: argparse.Namespace) -> int:
+    """Exit 0 healthy, 1 unhealthy. Used as the container HEALTHCHECK.
+
+    A missing heartbeat is unhealthy, not unknown: the service either wrote one or it
+    is not running the loop, and an orchestrator needs a decision either way.
+    """
+    from datetime import timedelta
+
+    beat = service.heartbeat.read()
+    tolerance = timedelta(seconds=args.max_age or service.settings.tick_interval_seconds * 3)
+
+    if beat is None:
+        if not args.quiet:
+            print("UNHEALTHY: no heartbeat recorded (service has not completed a tick)")
+        return 1
+
+    stale = beat.is_stale(tolerance)
+    killswitch = service.killswitch.read_state()
+
+    if not args.quiet:
+        print(f"heartbeat_age_s : {int(beat.age().total_seconds())}")
+        print(f"ticks           : {beat.tick_count}")
+        print(f"exchange_env    : {beat.exchange_env}")
+        print(f"exchange_ok     : {beat.exchange_reachable}")
+        print(f"kill_switch     : {killswitch.state}")
+        print(f"last_error      : {beat.last_error or '-'}")
+        print(f"status          : {'STALE' if stale else 'OK'}")
+
+    # An armed kill switch is not unhealthy. It is the system working: the process is
+    # alive and deliberately not trading. Restarting it would achieve nothing.
+    return 1 if stale else 0
+
+
 def _runtime_command(args: argparse.Namespace) -> int:
     """preflight and run. Kept apart from the operator commands because these
     construct the exchange-facing service, and that construction should be visible."""
@@ -117,6 +160,9 @@ def _runtime_command(args: argparse.Namespace) -> int:
         return 2
 
     try:
+        if args.group == "health":
+            return _health(service, args)
+
         if args.group == "preflight":
             info = service.preflight()
             if getattr(args, "json", False):

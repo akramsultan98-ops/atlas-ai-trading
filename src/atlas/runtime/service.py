@@ -36,6 +36,7 @@ from atlas.killswitch import KillSwitch
 from atlas.models import AuditEventType, StrategyStatus, utcnow
 from atlas.monitor.health import return_distribution
 from atlas.notify.telegram import Alert, Severity, TelegramNotifier
+from atlas.ops.heartbeat import HeartbeatStore
 from atlas.risk.limits import AccountState, PortfolioLimits
 from atlas.risk.sizing import ExchangeFilters, SizingPolicy
 from atlas.runtime.recovery import RecoveryReport, recover
@@ -62,7 +63,10 @@ class AtlasService:
     ingestor: FillIngestor
     trading: TradingService
     registry: StrategyRegistry
+    heartbeat: HeartbeatStore
     notifier: TelegramNotifier | None
+    tick_count: int = 0
+    exchange_reachable: bool = False
 
     # ---------------------------------------------------------------- lifecycle
 
@@ -134,12 +138,14 @@ class AtlasService:
                 series = self.klines.fetch(symbol, timeframe, max_bars=self.settings.history_bars)
             except Exception as exc:
                 log.warning("market data fetch failed for %s: %s", symbol, exc)
+                self.exchange_reachable = False
                 self.audit.append(
                     AuditEventType.SYSTEM,
                     {"event": "market_data_failed", "symbol": symbol, "error": str(exc)},
                     SERVICE_ACTOR,
                 )
                 continue
+            self.exchange_reachable = True
 
             report = validate_series(series)
             if not report.valid:
@@ -202,7 +208,25 @@ class AtlasService:
             )
 
     def tick(self) -> TickResult:
-        """One full operating cycle. Reconcile, ingest, then decide."""
+        """One full operating cycle. Reconcile, ingest, then decide.
+
+        The heartbeat is written whether the cycle succeeds or fails. A process that
+        hangs and one that errors every cycle look identical from outside unless the
+        failure itself is recorded.
+        """
+        self.tick_count += 1
+        try:
+            return self._tick()
+        except Exception as exc:
+            self.heartbeat.beat(
+                tick_count=self.tick_count,
+                exchange_env=self.settings.exchange_env,
+                exchange_reachable=self.exchange_reachable,
+                last_error=f"{type(exc).__name__}: {exc}",
+            )
+            raise
+
+    def _tick(self) -> TickResult:
         if self.settings.has_exchange_credentials():
             self.ingestor.ingest_all(self.settings.symbol_list)
 
@@ -230,6 +254,13 @@ class AtlasService:
             exchange_orders=exchange_orders,
             live_returns=live_returns,
             backtest_stats=backtest_stats,
+        )
+
+        self.heartbeat.beat(
+            tick_count=self.tick_count,
+            exchange_env=self.settings.exchange_env,
+            exchange_reachable=self.exchange_reachable,
+            last_error=None,
         )
 
         if result.halted:
@@ -328,6 +359,7 @@ def build_service(
         ingestor=ingestor,
         trading=trading,
         registry=StrategyRegistry(db),
+        heartbeat=HeartbeatStore(db),
         notifier=notifier,
     )
 

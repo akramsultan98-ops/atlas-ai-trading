@@ -195,6 +195,19 @@ CREATE TABLE IF NOT EXISTS equity_snapshots (
 
 CREATE INDEX IF NOT EXISTS idx_equity_at ON equity_snapshots(at);
 
+-- ------------------------------------------------------------- heartbeat (OPS)
+
+-- Single row. Written every tick so an external health check can tell a running
+-- process from a hung one without parsing logs.
+CREATE TABLE IF NOT EXISTS heartbeat (
+    id                INTEGER PRIMARY KEY CHECK (id = 1),
+    at                TEXT NOT NULL,
+    tick_count        INTEGER NOT NULL,
+    last_error        TEXT,
+    exchange_env      TEXT NOT NULL,
+    exchange_reachable INTEGER NOT NULL CHECK (exchange_reachable IN (0, 1))
+) STRICT;
+
 -- ------------------------------------------------------------------- meta
 
 CREATE TABLE IF NOT EXISTS schema_meta (

@@ -1,0 +1,51 @@
+# systemd unit for ATLAS V2.
+#
+#   sudo cp deploy/atlas.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now atlas
+#
+# Assumes a dedicated `atlas` user and a virtualenv at /opt/atlas/.venv.
+
+[Unit]
+Description=ATLAS V2 trading service
+Documentation=https://github.com/akramsultan98-ops/atlas-ai-trading
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=atlas
+Group=atlas
+WorkingDirectory=/opt/atlas
+EnvironmentFile=/opt/atlas/.env
+ExecStart=/opt/atlas/.venv/bin/atlas run
+
+# Restart on any exit. Startup recovery reconciles against the exchange before entries
+# resume, so a restart is safe; RestartSec throttles a crash loop.
+Restart=always
+RestartSec=30s
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+# SIGINT so the scheduler's KeyboardInterrupt path runs and shutdown is graceful.
+KillSignal=SIGINT
+TimeoutStopSec=30
+
+# Hardening. The process needs outbound HTTPS and one writable directory.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/atlas/var
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryMax=512M
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=atlas
+
+[Install]
+WantedBy=multi-user.target
