@@ -5,6 +5,15 @@ versions by implementation phase rather than semver until Phase 11.
 
 ## [Unreleased]
 
+### Phase 12 — Runtime orchestration
+- Interval scheduler: a failing tick is recorded and the loop continues; only a
+  sustained run of consecutive failures stops it
+- Restart recovery in the runbook's order — kill switch, reconcile, then resume
+  monitoring before entries (KILL-06, EXEC-04, EXEC-05)
+- `TradingService.tick`: reconcile, portfolio limits, staleness, sized bracketed
+  entries, then supervision — with retirement still running while halted
+- Repository target guard script (`scripts/verify-repo-target.sh`)
+
 ### End-to-end integration
 - Pipeline test driving one strategy through every stage: research → generation →
   validation → backtest → verification → selection → incubation → human
