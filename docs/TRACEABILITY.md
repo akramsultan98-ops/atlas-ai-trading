@@ -65,6 +65,66 @@ at the close of each phase.
 | VER-03 engine-defect alert | `VerificationOutcome.engine_defect_suspected` | `test_verify.py::test_trade_count_divergence_is_caught` |
 | SEL-01..07 gates | `atlas/selection/gates.py::evaluate_gates` | `test_selection.py` (23 cases) |
 
-## Phases 6–11
+## Phase 6 — Risk engine
 
-Populated as each phase completes.
+| Requirement | Implementation | Test |
+|---|---|---|
+| RISK-05, RISK-06 portfolio limits | `atlas/risk/limits.py::check_portfolio_limits` | `test_risk_limits.py::test_daily_loss_limit_arms_kill_switch`, `::test_account_drawdown_arms_kill_switch` |
+| RISK-08 one position per symbol | `can_open_symbol` | `test_risk_limits.py::test_one_position_per_symbol` |
+| RISK-09 live exchange filters | `atlas/risk/filters.py::ExchangeFilterCache` | `test_risk_limits.py::test_missing_filter_raises_rather_than_assuming` |
+
+## Phase 7 — Research loop
+
+| Requirement | Implementation | Test |
+|---|---|---|
+| AI-01 no credentials in the advisory plane | `Settings.for_research_plane`, absence of credential names | `test_containment.py::test_research_modules_never_read_exchange_credentials` |
+| AI-02 restricted tool surface | `atlas/research/tools.py` | `test_containment.py::test_every_control_plane_tool_is_refused`, `::test_research_package_does_not_import_execution_modules` |
+| AI-03 read-only DB role | `connect_readonly` | `test_containment.py::test_research_plane_database_role_is_read_only` |
+| AI-05 no shortcut to capital | `ResearchLoop.run_once` terminal state | `test_research_loop.py::test_loop_never_promotes_to_live` |
+| AI-06 untrusted output | `StrategySpec` strict schema; no eval/exec | `test_research_loop.py::test_llm_output_is_never_executed_as_code` |
+| AI-07 audited AI actions | `ResearchLoop._record` | `test_research_loop.py::test_every_pass_writes_an_audit_event` |
+| AI-08 survives losing the AI | optional `anthropic` extra | `test_containment.py::test_control_plane_imports_without_the_anthropic_sdk` |
+
+## Phase 8 — Incubation and promotion
+
+| Requirement | Implementation | Test |
+|---|---|---|
+| INC-01..03 zero-capital incubation | `atlas/incubation/tracker.py` | `test_incubation.py::test_tracker_records_paper_signals`, `::test_tracker_resolves_pessimistically` |
+| INC-04, INC-05 divergence | `atlas/incubation/divergence.py::check_divergence` | `test_incubation.py::test_profit_factor_collapse_blocks_promotion` |
+| PROM-01 human approval | `PromotionGate.promote` | `test_incubation.py::test_promotion_requires_human_confirmation` |
+| PROM-02 correlation gate | `evaluate_promotion` | `test_incubation.py::test_correlated_candidate_is_refused` |
+| PROM-03 reduced initial size | `PromotionGate.risk_multiplier_for` | `test_incubation.py::test_newly_promoted_strategy_trades_at_reduced_size` |
+| PROM-04 evidence snapshot | `promotions.evidence` | `test_incubation.py::test_successful_promotion_records_evidence` |
+
+## Phase 9 — Execution
+
+| Requirement | Implementation | Test |
+|---|---|---|
+| EXEC-01 spot, testnet default | `atlas/execution/broker.py` | `test_execution.py::test_testnet_is_the_default_environment` |
+| EXEC-02 bracketed entry | `open_bracketed_position` | `test_execution.py::test_failed_stop_reverses_the_entry`, `::test_failed_reversal_raises_unprotected_position` |
+| EXEC-03 idempotent order IDs | `atlas/execution/idempotency.py` | `test_execution.py::test_replayed_signal_produces_the_same_order_id` |
+| EXEC-04, EXEC-05 reconciliation | `atlas/execution/reconcile.py::Reconciler` | `test_execution.py::test_unknown_remote_order_arms_the_kill_switch` |
+| EXEC-06 kill switch before transmission | `BinanceSpotBroker.place` | `test_execution.py::test_armed_kill_switch_blocks_entry` |
+| EXEC-09 rejection classification | `classify_rejection` | `test_execution.py::test_insufficient_balance_is_terminal` |
+| EXEC-10 order audit | `BinanceSpotBroker.place` | `test_execution.py::test_intent_is_logged_before_the_network_call` |
+
+## Phase 10 — Monitoring and retirement
+
+| Requirement | Implementation | Test |
+|---|---|---|
+| MON-01 equity band | `atlas/monitor/rules.py::equity_band_breach` | `test_monitor.py::test_equity_band_breach_retires` |
+| MON-02 rolling win rate | `win_rate_collapse` | `test_monitor.py::test_win_rate_collapse_retires` |
+| MON-03 rolling profit factor | `profit_factor_collapse` | `test_monitor.py::test_profit_factor_collapse_retires` |
+| MON-04, MON-05 ATLAS additions | `consecutive_loss_streak`, `signal_starvation` | `test_monitor.py::test_consecutive_losses_suspend` |
+| MON-06 one-way retirement | `Supervisor.supervise`, `StrategyRegistry.set_status` | `test_monitor.py::test_retirement_is_one_way`, `::test_recovery_cannot_undo_a_retirement` |
+| MON-07 no quorum | `Supervisor.supervise` | `test_monitor.py::test_single_rule_retires_without_a_quorum` |
+| Regression | — | `test_monitor.py::test_decay_curve_retires_automatically` |
+
+## Phase 11 — Operations
+
+| Requirement | Implementation | Test |
+|---|---|---|
+| Outbound-only alerting | `atlas/notify/telegram.py` | `test_ops.py::test_notifier_has_no_inbound_path` |
+| Environment on every alert | `Alert.render` | `test_ops.py::test_alert_names_its_environment` |
+| DATA-05, KILL-02 health checks | `atlas/ops/health.py` | `test_ops.py::test_stale_data_triggers_the_kill_switch` |
+| Control panel | `atlas/ops/dashboard.py` | `test_ops.py::test_summary_reports_survival_rate` |

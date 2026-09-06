@@ -73,8 +73,8 @@ def equity_band_breach(health: StrategyHealth, thresholds: MonitorThresholds) ->
         action=RuleAction.RETIRE,
         detail=(
             f"realised {health.realised_equity:.4f} vs lower band {lower:.4f} "
-            f"(expected {health.expected_equity:.4f} - {thresholds.band_sigma}σ "
-            f"× {health.equity_sigma:.4f})"
+            f"(expected {health.expected_equity:.4f} - {thresholds.band_sigma} sigma "
+            f"x {health.equity_sigma:.4f})"
         ),
     )
 
@@ -91,7 +91,7 @@ def win_rate_collapse(
         action=RuleAction.RETIRE,
         detail=(
             f"rolling win rate {health.rolling_win_rate:.2%} below "
-            f"{thresholds.win_rate_retention} × backtest {backtest_win_rate:.2%} "
+            f"{thresholds.win_rate_retention} x backtest {backtest_win_rate:.2%} "
             f"= {floor:.2%}"
         ),
     )

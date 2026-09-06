@@ -5,6 +5,17 @@ versions by implementation phase rather than semver until Phase 11.
 
 ## [Unreleased]
 
+### Phase 11 — Operations
+- Telegram alerting, outbound only: no command handler, polling loop or webhook
+  receiver exists, and a test asserts none is added
+- Every alert names its exchange environment, so a testnet alert cannot be read
+  as live
+- Failed alert delivery never raises — an unreachable notifier must not stop
+  trading or retirement
+- System health checks mapping data staleness and API error rate to their
+  kill-switch triggers (DATA-05, KILL-02)
+- Control-panel data: strategy listing, lifecycle funnel and survival rate
+
 ### Phase 10 — Monitoring and automatic retirement
 - The source's three rules implemented with ATLAS parameters: equity-curve band
   breach, rolling win rate, rolling profit factor (MON-01..03)

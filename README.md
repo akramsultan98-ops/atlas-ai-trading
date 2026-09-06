@@ -52,10 +52,15 @@ Gates reject terminally. Phases 1–6 contain no LLM and no network write path.
 | 8 | Incubation and promotion | ✅ complete |
 | 9 | Execution | ✅ complete (testnet only; no credentials exist) |
 | 10 | Monitoring and retirement | ✅ complete |
-| 11 | Operations | ⬜ pending |
+| 11 | Operations | ✅ complete |
 
-**No real-money trading.** No exchange credentials exist in this project. The account is
-not funded. See [docs/SECURITY.md](docs/SECURITY.md).
+All eleven phases are implemented. **421 tests, ruff clean, mypy strict clean.**
+
+**No real-money trading.** No exchange credentials exist in this project, the account is
+not funded, and `ATLAS_EXCHANGE_ENV` defaults to `testnet` (which `Settings` refuses to
+change outside `env=production`). The pre-live checklist is in
+[docs/RUNBOOK.md](docs/RUNBOOK.md); it is not to be exercised until a full system audit
+and explicit approval. See [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Quick start
 
