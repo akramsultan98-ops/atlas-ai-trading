@@ -5,6 +5,19 @@ versions by implementation phase rather than semver until Phase 11.
 
 ## [Unreleased]
 
+### Phase 4 — Backtest engine
+- Event-driven engine: next-open fills (BT-03), pessimistic stop-vs-target
+  resolution (BT-06), entry bar cannot also exit
+- `GuardedBars` look-ahead guard that raises on any forward read (BT-02)
+- Cost model: 0.10% fee + 0.05% slippage per side, slippage always against the
+  trader (BT-04)
+- Position sizing brought forward from Phase 6 so the backtest applies real live
+  sizing rules rather than a toy sizer (BT-05); rejects rather than rounding up
+  to reach minNotional
+- Statistics incl. costed buy-and-hold benchmark (BT-07); provenance recorded on
+  every run (BT-08)
+- Feasible stop band verified against the specification table: 3.0%–20.0% at $100
+
 ### Phase 3 — Strategy representation
 - Declarative `StrategySpec`: strategies are data, never executable code (STRAT-01)
 - No trailing-stop field anywhere in the schema, making it unrepresentable (STRAT-04)
