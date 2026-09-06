@@ -113,15 +113,35 @@ untested and is written from the API contract, not from observed behaviour.
 
 1. Create a Testnet key at https://testnet.binance.vision (spot only).
 2. Set `ATLAS_EXCHANGE_ENV=testnet`, `ATLAS_BINANCE_API_KEY`, `ATLAS_BINANCE_API_SECRET`.
-3. `atlas preflight` — expect `exchange_reachable: yes`, `authenticated: yes`, and a
-   `clock_drift_ms` under 5000. Drift above that exceeds `recvWindow` and every signed
-   request will be rejected.
+3. `atlas preflight`. Read every line, not just the last one:
+   - `exchange_reachable: yes` and `authenticated: yes`
+   - `clock_drift_ms` below `recv_window_ms`. Above it, every signed request is
+     rejected as `-1021`, which reads like a bad key and is not one.
+   - `filters_<SYMBOL>` present for each configured symbol, and **compare the real
+     `minNotional` against the $5 ATLAS assumed** (RISK-09, `docs/EVIDENCE.md`).
+   - `feasible_stop_band_<SYMBOL>` non-empty. `EMPTY` means the balance is too small
+     to size any trade at the intended risk — fund the account or nothing will trade.
 4. `atlas killswitch init` — the deliberate release to trade.
 5. `atlas run --once` — one cycle. Inspect with `atlas audit tail`.
-6. Confirm in order: klines fetched and validated · order submitted · order acknowledged
-   · protective stop present · fill retrieved · fill in the ledger · reconciliation clean.
-7. Kill the process mid-position and restart. Recovery must reconcile before entering.
-8. Only then `atlas run` continuously.
+6. Confirm in order, in the audit trail and the database:
+   - klines fetched and validated
+   - entry submitted (`ORDER_INTENT` before the network call) and acknowledged
+   - a row in `orders` for the entry, **and for both exit legs**, each carrying a
+     `position_id`
+   - a row in `positions`, open, at the price the entry *filled* at
+   - the OCO accepted — if it is rejected, `OCO_ENDPOINT` in
+     `atlas/execution/broker.py` may need the newer `/api/v3/orderList/oco`
+     (see `docs/EVIDENCE.md`)
+   - fill retrieved from `myTrades` and recorded in `fills`
+   - reconciliation clean, kill switch still disarmed
+7. Let a position close (or close it by hand on the exchange). Confirm the next tick
+   ingests the exit fill, `positions.closed_at` is set, `realised_pnl` is recorded, and
+   the symbol is free to trade again. **A position that never closes locally is the
+   failure to watch for**: it blocks the symbol under RISK-08 and inflates deployed
+   capital indefinitely.
+8. Kill the process mid-position and restart. Recovery must reconcile before entering,
+   and must *not* arm the kill switch over ATLAS's own open orders.
+9. Only then `atlas run` continuously.
 
 If any step fails, stop. Do not proceed to the next.
 
