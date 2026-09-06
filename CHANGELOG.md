@@ -5,6 +5,16 @@ versions by implementation phase rather than semver until Phase 11.
 
 ## [Unreleased]
 
+### Order, fill and position ledger
+- Writer for the `orders`, `fills` and `positions` tables, which had existed since
+  Phase 1 with nothing populating them
+- Fills are idempotent on the exchange trade id, since exchanges re-deliver trades
+  on reconnect and on overlapping polled windows
+- Position PnL and closed-trade returns feed the monitor (MON-01..04) and open
+  symbols feed the per-symbol limit (RISK-08)
+- Quantities summed in Python rather than SQL, so money never round-trips through
+  SQLite's REAL (ADR-003)
+
 ### Phase 12 — Runtime orchestration
 - Interval scheduler: a failing tick is recorded and the loop continues; only a
   sustained run of consecutive failures stops it
