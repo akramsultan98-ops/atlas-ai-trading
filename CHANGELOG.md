@@ -5,6 +5,16 @@ versions by implementation phase rather than semver until Phase 11.
 
 ## [Unreleased]
 
+### Phase 3 — Strategy representation
+- Declarative `StrategySpec`: strategies are data, never executable code (STRAT-01)
+- No trailing-stop field anywhere in the schema, making it unrepresentable (STRAT-04)
+- Fixed indicator library — sma, ema, rsi, atr, true_range, rolling high/low,
+  volume_sma — each tested against known values and against forward reads (STRAT-07)
+- Pure `evaluate(spec, bars)` producing signals with stop and target fixed at
+  signal time (STRAT-03, STRAT-05)
+- Content-hash spec versioning and a registry whose RETIRED state is terminal
+  (STRAT-06, MON-06)
+
 ### Phase 2 — Market data
 - `Kline` / `KlineSeries` with Decimal prices and enforced OHLC consistency
 - Binance kline client with injected transport; drops the in-progress bar (DATA-02)

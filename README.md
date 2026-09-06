@@ -44,7 +44,7 @@ Gates reject terminally. Phases 1–6 contain no LLM and no network write path.
 | 0 | Repository, toolchain, CI | ✅ complete |
 | 1 | Safety primitives — config, models, kill switch, audit, persistence | ✅ complete |
 | 2 | Market data | ✅ complete |
-| 3 | Strategy representation | ⬜ pending |
+| 3 | Strategy representation | ✅ complete |
 | 4 | Backtest engine | ⬜ pending |
 | 5 | Verification and selection | ⬜ pending |
 | 6 | Risk and sizing | ⬜ pending |
