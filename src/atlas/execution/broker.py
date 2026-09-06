@@ -68,6 +68,24 @@ class OrderRequest:
 
 
 @dataclass(frozen=True)
+class AssetBalance:
+    """One asset's holding, split the way the exchange reports it.
+
+    `locked` is not a rounding detail: base asset sitting behind a resting stop or
+    target order is reported as locked, so a balance reader that looked only at `free`
+    would value an account with protective orders in place at close to zero.
+    """
+
+    asset: str
+    free: Decimal
+    locked: Decimal
+
+    @property
+    def total(self) -> Decimal:
+        return self.free + self.locked
+
+
+@dataclass(frozen=True)
 class OrderAck:
     client_order_id: str
     exchange_order_id: str
@@ -189,6 +207,11 @@ class BinanceSpotBroker:
         self.base_url = SPOT_MAINNET if exchange_env is ExchangeEnv.LIVE else SPOT_TESTNET
         self._transport = transport
         self._recv_window = recv_window_ms
+
+    @property
+    def recv_window_ms(self) -> int:
+        """The signature validity window. Clock drift beyond it rejects every signed call."""
+        return self._recv_window
 
     # ---------------------------------------------------------------- signing
 
@@ -349,17 +372,31 @@ class BinanceSpotBroker:
         )
         return list(raw) if isinstance(raw, list) else []
 
-    def account_balances(self) -> dict[str, Decimal]:
+    def account_snapshot(self) -> dict[str, AssetBalance]:
+        """Signed account balances, free and locked, for every asset actually held.
+
+        Zero holdings are dropped because Binance returns every listed asset; a missing
+        key therefore means "none", which is what the callers already assume.
+        """
         raw = self._require_transport().get(
             f"{self.base_url}/api/v3/account?{self._signed_query({})}", self._headers()
         )
         if not isinstance(raw, dict):
-            return {}
-        return {
-            str(b["asset"]): Decimal(str(b["free"]))
-            for b in raw.get("balances", [])
-            if Decimal(str(b.get("free", "0"))) > 0
-        }
+            raise AtlasError(f"unexpected /account response from {self.base_url}")
+
+        balances: dict[str, AssetBalance] = {}
+        for entry in raw.get("balances", []):
+            free = Decimal(str(entry.get("free", "0")))
+            locked = Decimal(str(entry.get("locked", "0")))
+            if free <= 0 and locked <= 0:
+                continue
+            asset = str(entry["asset"])
+            balances[asset] = AssetBalance(asset=asset, free=free, locked=locked)
+        return balances
+
+    def account_balances(self) -> dict[str, Decimal]:
+        """Free balances only. Convenience over `account_snapshot`."""
+        return {a: b.free for a, b in self.account_snapshot().items() if b.free > 0}
 
 
 def classify_rejection(status: int, body: str) -> OrderRejection:

@@ -27,11 +27,33 @@ class PortfolioLimits:
 
 @dataclass(frozen=True)
 class AccountState:
+    """A valued snapshot of the account.
+
+    `equity` is the marked total: quote cash (free and locked) plus every open position
+    valued at its last known price. Quote cash alone is not equity — the moment an entry
+    fills, cash leaves and base asset arrives, and an equity figure that counted only the
+    cash would read that as an instantaneous loss the size of the position. At $100 with
+    a 33% position cap that is a fabricated 33% drawdown on the first fill, which trips
+    RISK-06 and halts the account for a trade that has not yet moved.
+
+    `free_cash` and `deployed` are separate inputs to sizing (RISK-04) and are not
+    interchangeable with equity: cash that is already in a position cannot fund another.
+
+    `valuation_complete` is false when an open position had no price to mark against.
+    A partial valuation is not a small error — it understates equity by exactly the
+    unpriced position — so it must never be compared against a loss limit or persisted
+    as a snapshot.
+    """
+
     equity: Decimal
     peak_equity: Decimal
     day_start_equity: Decimal
     as_of: date
+    free_cash: Decimal
+    deployed: Decimal = ZERO
     open_symbols: frozenset[str] = frozenset()
+    valuation_complete: bool = True
+    unpriced_symbols: frozenset[str] = frozenset()
 
     @property
     def drawdown_from_peak(self) -> Decimal:

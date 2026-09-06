@@ -19,6 +19,7 @@ from atlas.models import PositionSide
 class RejectReason(StrEnum):
     NONE = "NONE"
     INVALID_LEVELS = "INVALID_LEVELS"
+    FILTERS_UNAVAILABLE = "FILTERS_UNAVAILABLE"
     BELOW_MIN_NOTIONAL = "BELOW_MIN_NOTIONAL"
     BELOW_MIN_QTY = "BELOW_MIN_QTY"
     NO_FREE_CASH = "NO_FREE_CASH"

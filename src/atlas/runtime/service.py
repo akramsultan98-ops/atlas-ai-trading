@@ -17,6 +17,7 @@ before it has reconciled is trading against state it has not verified.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
@@ -37,8 +38,9 @@ from atlas.models import AuditEventType, StrategyStatus, utcnow
 from atlas.monitor.health import return_distribution
 from atlas.notify.telegram import Alert, Severity, TelegramNotifier
 from atlas.ops.heartbeat import HeartbeatStore
+from atlas.risk.filters import ExchangeFilterCache, SymbolFilterProvider
 from atlas.risk.limits import AccountState, PortfolioLimits
-from atlas.risk.sizing import ExchangeFilters, SizingPolicy
+from atlas.risk.sizing import SizingPolicy
 from atlas.runtime.recovery import RecoveryReport, recover
 from atlas.runtime.trading_service import TickResult, TradingService
 from atlas.strategy.registry import StrategyRegistry
@@ -61,6 +63,7 @@ class AtlasService:
     store: KlineStore
     ledger: Ledger
     ingestor: FillIngestor
+    filters: SymbolFilterProvider
     trading: TradingService
     registry: StrategyRegistry
     heartbeat: HeartbeatStore
@@ -89,14 +92,60 @@ class AtlasService:
         result["server_time_ms"] = str(server_time)
         drift_ms = abs(int(utcnow().timestamp() * 1000) - server_time)
         result["clock_drift_ms"] = str(drift_ms)
-        if drift_ms > 5000:
-            # recvWindow is 5s; beyond that every signed request will be rejected.
-            result["clock_drift_warning"] = "drift exceeds recvWindow"
+        recv_window = self.broker.recv_window_ms
+        result["recv_window_ms"] = str(recv_window)
+        if drift_ms > recv_window:
+            # Past recvWindow the exchange rejects every signed request as -1021. It
+            # reads as a credential fault and is not one, so name it here.
+            result["clock_drift_warning"] = (
+                f"drift {drift_ms}ms exceeds recvWindow {recv_window}ms; "
+                "signed requests will be rejected until the host clock is synchronised"
+            )
+
+        # RISK-09: prove the real filters are readable before trading, not at the
+        # moment an order is being sized. A symbol whose filters cannot be read cannot
+        # be traded, and it is better to learn that at startup.
+        observed: dict[str, Decimal] = {}
+        for symbol in self.settings.symbol_list:
+            try:
+                filters = self.filters.get(symbol, force=True)
+            except (AtlasError, OSError) as exc:
+                result[f"filters_{symbol}"] = f"UNAVAILABLE: {exc}"
+                continue
+            observed[symbol] = filters.min_notional
+            result[f"filters_{symbol}"] = (
+                f"minNotional={filters.min_notional} stepSize={filters.step_size} "
+                f"minQty={filters.min_qty} tickSize={filters.tick_size}"
+            )
 
         if self.settings.has_exchange_credentials():
-            balances = self.broker.account_balances()
+            snapshot = self.broker.account_snapshot()
+            balance = snapshot.get(self.settings.quote_asset)
+            free = balance.free if balance else Decimal(0)
+            locked = balance.locked if balance else Decimal(0)
             result["authenticated"] = "yes"
-            result["quote_balance"] = str(balances.get(self.settings.quote_asset, Decimal(0)))
+            result["quote_free"] = str(free)
+            result["quote_locked"] = str(locked)
+            result["open_orders"] = str(len(self.broker.open_orders()))
+
+            # Specification section 6: which stop distances are actually tradeable at
+            # this balance, computed from the exchange's real minNotional rather than
+            # the $5 the document uses illustratively. Outside this band a strategy
+            # cannot be sized at its intended risk.
+            policy = SizingPolicy(
+                risk_pct=self.risk.risk_pct,
+                max_position_pct=self.risk.max_position_pct,
+                max_deployed_pct=self.risk.max_deployed_pct,
+                max_concurrent=self.risk.max_concurrent,
+            )
+            equity = free + locked
+            for symbol, min_notional in observed.items():
+                lower = policy.min_feasible_stop_distance
+                upper = policy.max_feasible_stop_distance(equity, min_notional)
+                result[f"feasible_stop_band_{symbol}"] = (
+                    f"{lower:.4f}..{upper:.4f} at equity {equity}"
+                    + ("" if upper > lower else "  EMPTY: balance too small to trade")
+                )
         else:
             result["authenticated"] = "no credentials configured"
         return result
@@ -165,12 +214,42 @@ class AtlasService:
             series_by_symbol[symbol] = series
         return series_by_symbol
 
-    def account_state(self) -> AccountState:
-        """Build the account snapshot the risk engine bounds decisions with."""
-        equity = Decimal(0)
+    def account_state(self, prices: Mapping[str, Decimal]) -> AccountState:
+        """Value the account: quote cash plus open positions marked to market.
+
+        Cash alone is not equity. An entry converts quote into base, so an equity figure
+        built from the quote balance drops by the full position notional the instant a
+        fill lands — a fabricated loss that RISK-05 and RISK-06 would read as real. At
+        $100 with a 33% position cap the first fill alone would look like a 33%
+        drawdown and halt the account.
+
+        Positions are valued from the ledger rather than from base-asset balances, so a
+        holding sitting behind a resting protective order (reported `locked`, not
+        `free`) is still counted. Ledger and exchange are reconciled before this runs.
+
+        A position with no price this tick is not valued at zero — it is recorded as
+        unpriced and the snapshot is marked incomplete, so no limit is evaluated
+        against a figure that is missing a position.
+        """
+        free = Decimal(0)
+        locked = Decimal(0)
         if self.settings.has_exchange_credentials():
-            balances = self.broker.account_balances()
-            equity = balances.get(self.settings.quote_asset, Decimal(0))
+            balance = self.broker.account_snapshot().get(self.settings.quote_asset)
+            if balance is not None:
+                free, locked = balance.free, balance.locked
+
+        deployed = Decimal(0)
+        unpriced: set[str] = set()
+        open_symbols: set[str] = set()
+        for position in self.ledger.open_positions():
+            open_symbols.add(position.symbol)
+            price = prices.get(position.symbol)
+            if price is None:
+                unpriced.add(position.symbol)
+                continue
+            deployed += position.quantity * price
+
+        equity = free + locked + deployed
 
         row = self.db.connection.execute(
             "SELECT equity, peak_equity FROM equity_snapshots ORDER BY id DESC LIMIT 1"
@@ -189,10 +268,25 @@ class AtlasService:
             peak_equity=peak,
             day_start_equity=day_start,
             as_of=today,
-            open_symbols=self.ledger.open_symbols(),
+            free_cash=free,
+            deployed=deployed,
+            open_symbols=frozenset(open_symbols),
+            valuation_complete=not unpriced,
+            unpriced_symbols=frozenset(unpriced),
         )
 
     def record_equity(self, state: AccountState) -> None:
+        """Persist a valued snapshot. Never call this with an incomplete valuation.
+
+        The snapshot table is what `peak_equity` and `day_start_equity` are read back
+        from, so one understated row biases every drawdown comparison made afterwards —
+        including on days when the data gap is long gone.
+        """
+        if not state.valuation_complete:
+            raise AtlasError(
+                "refusing to record an incomplete account valuation; "
+                f"unpriced: {sorted(state.unpriced_symbols)}"
+            )
         with self.db.transaction() as conn:
             conn.execute(
                 "INSERT INTO equity_snapshots(at, equity, free_cash, deployed, "
@@ -200,8 +294,8 @@ class AtlasService:
                 (
                     utcnow().isoformat(),
                     str(state.equity),
-                    str(state.equity),
-                    "0",
+                    str(state.free_cash),
+                    str(state.deployed),
                     str(state.peak_equity),
                     "runtime",
                 ),
@@ -230,10 +324,23 @@ class AtlasService:
         if self.settings.has_exchange_credentials():
             self.ingestor.ingest_all(self.settings.symbol_list)
 
-        state = self.account_state()
-        self.record_equity(state)
-
+        # Market data first: the account cannot be valued without prices to mark open
+        # positions against, and an unvalued account must not reach the risk limits.
         series_by_symbol = self.fetch_market_data()
+        prices = {
+            symbol: series.bars[-1].close
+            for symbol, series in series_by_symbol.items()
+            if series.bars
+        }
+
+        state = self.account_state(prices)
+        if state.valuation_complete:
+            self.record_equity(state)
+        else:
+            log.warning(
+                "account valuation incomplete; unpriced: %s", sorted(state.unpriced_symbols)
+            )
+
         exchange_orders: list[dict[str, object]] = []
         if self.settings.has_exchange_credentials():
             exchange_orders = list(self.broker.open_orders())
@@ -287,7 +394,7 @@ def build_service(
     settings: Settings | None = None,
     risk: RiskSettings | None = None,
     *,
-    filters: ExchangeFilters | None = None,
+    filters: SymbolFilterProvider | None = None,
 ) -> AtlasService:
     """Construct a runnable ATLAS instance from configuration."""
     cfg = settings or Settings()
@@ -319,6 +426,10 @@ def build_service(
         transport=UrllibBrokerTransport(),
     )
     klines = BinanceKlineClient(cfg.exchange_env, transport=UrllibTransport())
+    # RISK-09: the live path reads LOT_SIZE, NOTIONAL and PRICE_FILTER from the
+    # exchange. The cache refreshes daily and raises rather than falling back, so a
+    # symbol whose filters cannot be read is simply not traded.
+    filter_provider = filters or ExchangeFilterCache(cfg.exchange_env, transport=UrllibTransport())
     store = KlineStore(cfg.data_dir / "klines")
     ledger = Ledger(db, audit)
     ingestor = FillIngestor(db, audit, broker)
@@ -335,7 +446,7 @@ def build_service(
         killswitch,
         broker,
         policy=policy,
-        filters=filters or ExchangeFilters(),
+        filters=filter_provider,
         limits=PortfolioLimits(
             daily_loss_limit=risk_cfg.daily_loss_limit,
             max_account_drawdown=risk_cfg.max_account_dd,
@@ -357,6 +468,7 @@ def build_service(
         store=store,
         ledger=ledger,
         ingestor=ingestor,
+        filters=filter_provider,
         trading=trading,
         registry=StrategyRegistry(db),
         heartbeat=HeartbeatStore(db),

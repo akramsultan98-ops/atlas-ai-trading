@@ -7,8 +7,9 @@ without notice, and a stale minNotional silently changes which strategies are tr
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Any
+from typing import Any, ClassVar, Protocol
 
 from atlas.data.klines import MAINNET_BASE, TESTNET_BASE, KlineTransport, UrllibTransport
 from atlas.errors import AtlasError
@@ -18,6 +19,39 @@ from atlas.risk.sizing import ExchangeFilters
 
 class ExchangeInfoError(AtlasError):
     """Exchange filters could not be obtained or parsed."""
+
+
+class SymbolFilterProvider(Protocol):
+    """Supplies the filters one symbol must be sized against.
+
+    Filters are per symbol, not per account: `LOT_SIZE` and `NOTIONAL` differ between
+    BTCUSDT and a low-priced altcoin by orders of magnitude. A provider that answered
+    the same values for every symbol would size correctly for one of them by accident.
+
+    `is_live` states whether the values come from the exchange. The live trading path
+    asserts it (RISK-09); backtests do not, because a backtest deliberately holds its
+    economics fixed.
+    """
+
+    is_live: ClassVar[bool]
+
+    def get(self, symbol: str, *, force: bool = False) -> ExchangeFilters: ...
+
+
+@dataclass(frozen=True)
+class StaticFilterProvider:
+    """A fixed filter set, for backtests, research and tests.
+
+    Explicitly not live. Passing one of these into the live trading path is refused at
+    construction — sizing a real order against assumed filters is how an order gets
+    rejected for `LOT_SIZE` at best, and mis-sized at worst.
+    """
+
+    filters: ExchangeFilters = field(default_factory=ExchangeFilters)
+    is_live: ClassVar[bool] = False
+
+    def get(self, symbol: str, *, force: bool = False) -> ExchangeFilters:
+        return self.filters
 
 
 def parse_symbol_filters(payload: dict[str, Any]) -> ExchangeFilters:
@@ -48,7 +82,14 @@ def parse_symbol_filters(payload: dict[str, Any]) -> ExchangeFilters:
 
 
 class ExchangeFilterCache:
-    """Fetches and caches per-symbol filters, refreshing on an age bound."""
+    """Fetches and caches per-symbol filters, refreshing on an age bound.
+
+    The live provider (RISK-09). A fetch failure raises rather than degrading to a
+    default: an unknown filter is not the same as a permissive one, and the caller must
+    decline the trade rather than guess.
+    """
+
+    is_live: ClassVar[bool] = True
 
     def __init__(
         self,

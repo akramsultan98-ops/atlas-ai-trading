@@ -1,6 +1,12 @@
 """Risk and sizing (specification section 6). All ATLAS decisions."""
 
-from atlas.risk.filters import ExchangeFilterCache, ExchangeInfoError, parse_symbol_filters
+from atlas.risk.filters import (
+    ExchangeFilterCache,
+    ExchangeInfoError,
+    StaticFilterProvider,
+    SymbolFilterProvider,
+    parse_symbol_filters,
+)
 from atlas.risk.limits import (
     AccountState,
     LimitBreach,
@@ -27,6 +33,8 @@ __all__ = [
     "RejectReason",
     "SizingPolicy",
     "SizingResult",
+    "StaticFilterProvider",
+    "SymbolFilterProvider",
     "can_open_symbol",
     "check_portfolio_limits",
     "feasible_stop_band",

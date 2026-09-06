@@ -5,6 +5,35 @@ versions by implementation phase rather than semver until Phase 11.
 
 ## [Unreleased]
 
+### Pre-testnet integration fixes
+Three requirements held in their components and failed in the assembled system.
+
+- **RISK-05/RISK-06 — equity counted only quote cash.** An entry converts quote into
+  base, so the account appeared to lose the whole position notional the instant a fill
+  landed. Reproduced against the previous code: $70 cash plus a $30 open position was
+  valued at $70, a 30% drawdown, arming `MAX_ACCOUNT_DD` on the first trade of a $100
+  account. `AtlasService.account_state` now marks open positions from the ledger at the
+  last close, and counts locked quote as well as free.
+- **RISK-09 — the live path sized every symbol against hardcoded filters.**
+  `ExchangeFilterCache` existed and was tested but was never constructed;
+  `build_service` passed the assumed defaults (minNotional $5, step 1e-5) straight to
+  the trading service. Filters are now supplied per symbol by a `SymbolFilterProvider`,
+  the runtime wires the live cache, and `TradingService` refuses a fixed provider at
+  construction. A symbol whose filters cannot be read is declined, never guessed at.
+- **RISK-04 — the deployment cap never bound.** The tick passed `deployed=0`
+  unconditionally, so a portfolio could deploy all of equity while the 75% limit
+  reported itself satisfied. Deployment and free cash now come from the account
+  snapshot and are carried forward within a tick, so a second entry is sized against
+  the first.
+- An account that cannot be fully valued (an open position with no price this tick) is
+  neither compared against a loss limit nor persisted as a snapshot: entries are
+  suspended and the switch is left alone, since the alternative manufactures a breach
+  out of a market-data gap and biases every later drawdown comparison. An armed kill
+  switch outranks a suspension in what the tick reports.
+- `preflight` now fetches real filters per symbol, reports the $100 feasible stop band
+  from the exchange's own minNotional, compares clock drift against the broker's
+  `recvWindow`, and reports free/locked quote and open-order count.
+
 ### Deployment, monitoring, security and economic provenance
 - Dockerfile (non-root, volume-backed state, HEALTHCHECK, no default `run`),
   compose file with bounded resources, hardened systemd unit

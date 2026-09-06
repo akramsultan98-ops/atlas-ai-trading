@@ -21,6 +21,8 @@ TODAY = date(2026, 9, 6)
 
 
 def account(equity: str, peak: str = "100", day_start: str = "100", **kw: object) -> AccountState:
+    """All cash, nothing deployed, unless a test says otherwise."""
+    kw.setdefault("free_cash", D(equity))
     return AccountState(
         equity=D(equity),
         peak_equity=D(peak),
@@ -79,7 +81,9 @@ def test_limits_are_configurable() -> None:
 
 
 def test_zero_peak_equity_does_not_divide_by_zero() -> None:
-    state = AccountState(equity=D("0"), peak_equity=D("0"), day_start_equity=D("0"), as_of=TODAY)
+    state = AccountState(
+        equity=D("0"), peak_equity=D("0"), day_start_equity=D("0"), as_of=TODAY, free_cash=D("0")
+    )
     assert check_portfolio_limits(state) is None
 
 

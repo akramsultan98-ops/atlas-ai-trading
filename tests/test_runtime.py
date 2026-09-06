@@ -7,7 +7,8 @@ from decimal import Decimal
 from typing import Any
 
 import pytest
-from tests.test_backtest import FILTERS, POLICY, series_from
+from tests.conftest import StubFilterProvider
+from tests.test_backtest import POLICY, series_from
 from tests.test_evaluator import percent_spec
 from tests.test_execution import StubTransport, ack
 
@@ -167,6 +168,7 @@ def _account(equity: str = "100", peak: str = "100", day_start: str = "100") -> 
         peak_equity=D(peak),
         day_start_equity=D(day_start),
         as_of=date(2026, 9, 6),
+        free_cash=D(equity),
     )
 
 
@@ -178,7 +180,11 @@ def _live_strategy(db: Database) -> str:
 
 
 def _service(
-    db: Database, audit: AuditLog, killswitch: KillSwitch, transport: StubTransport
+    db: Database,
+    audit: AuditLog,
+    killswitch: KillSwitch,
+    transport: StubTransport,
+    filters: StubFilterProvider | None = None,
 ) -> TradingService:
     broker = BinanceSpotBroker(
         "k", "s", killswitch, audit, exchange_env=ExchangeEnv.TESTNET, transport=transport
@@ -189,7 +195,7 @@ def _service(
         killswitch,
         broker,
         policy=POLICY,
-        filters=FILTERS,
+        filters=filters or StubFilterProvider(),
         limits=PortfolioLimits(),
     )
 
@@ -308,6 +314,7 @@ def test_no_duplicate_position_per_symbol(
         peak_equity=D("100"),
         day_start_equity=D("100"),
         as_of=date(2026, 9, 6),
+        free_cash=D("100"),
         open_symbols=frozenset({"BTCUSDT"}),
     )
     result = service.tick(

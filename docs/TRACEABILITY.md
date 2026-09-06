@@ -70,8 +70,10 @@ at the close of each phase.
 | Requirement | Implementation | Test |
 |---|---|---|
 | RISK-05, RISK-06 portfolio limits | `atlas/risk/limits.py::check_portfolio_limits` | `test_risk_limits.py::test_daily_loss_limit_arms_kill_switch`, `::test_account_drawdown_arms_kill_switch` |
+| RISK-05, RISK-06 evaluated against marked equity, not cash | `atlas/runtime/service.py::AtlasService.account_state` | `test_valuation.py::test_open_position_does_not_read_as_a_loss`, `::test_equity_moves_with_the_position_not_with_the_fill` |
 | RISK-08 one position per symbol | `can_open_symbol` | `test_risk_limits.py::test_one_position_per_symbol` |
 | RISK-09 live exchange filters | `atlas/risk/filters.py::ExchangeFilterCache` | `test_risk_limits.py::test_missing_filter_raises_rather_than_assuming` |
+| RISK-09 live filters reach the sizer, per symbol | `atlas/runtime/trading_service.py::TradingService`, `build_service` | `test_valuation.py::test_the_runtime_wires_a_live_filter_provider`, `::test_the_symbols_own_min_notional_binds`, `::test_trading_service_refuses_fixed_filters` |
 
 ## Phase 7 — Research loop
 
@@ -128,3 +130,17 @@ at the close of each phase.
 | Environment on every alert | `Alert.render` | `test_ops.py::test_alert_names_its_environment` |
 | DATA-05, KILL-02 health checks | `atlas/ops/health.py` | `test_ops.py::test_stale_data_triggers_the_kill_switch` |
 | Control panel | `atlas/ops/dashboard.py` | `test_ops.py::test_summary_reports_survival_rate` |
+
+## Pre-testnet integration fixes
+
+Three requirements were satisfied by their components and defeated by the assembly.
+Each unit test passed; the system they formed did not meet the requirement.
+
+| Requirement | Implementation | Test |
+|---|---|---|
+| RISK-04 deployed capital bounds new entries | `TradingService.tick` reads `AccountState.deployed` and carries it forward within a tick | `test_valuation.py::test_deployed_capital_reaches_the_sizer` |
+| RISK-05, RISK-06 equity includes open positions | `AtlasService.account_state` marks positions from the ledger at the last close | `test_valuation.py::test_open_position_does_not_read_as_a_loss`, `::test_a_position_held_behind_a_protective_order_is_still_valued` |
+| RISK-09 no hardcoded filters in the live path | `SymbolFilterProvider`; `TradingService` refuses `StaticFilterProvider` | `test_valuation.py::test_trading_service_refuses_fixed_filters`, `::test_unavailable_filters_decline_the_entry` |
+| Partial valuation never priced or persisted | `AccountState.valuation_complete`, `record_equity` refusal | `test_valuation.py::test_incomplete_valuation_is_never_persisted`, `::test_a_tick_that_cannot_price_a_position_records_no_snapshot` |
+| Armed switch outranks a suspension | `TradingService.tick` ordering | `test_valuation.py::test_an_armed_switch_outranks_a_suspension` |
+| Preflight proves filters and clock before trading | `AtlasService.preflight` | `test_valuation.py::test_preflight_reports_the_real_symbol_filters`, `::test_preflight_names_clock_drift_for_what_it_is` |
