@@ -50,7 +50,7 @@ Gates reject terminally. Phases 1–6 contain no LLM and no network write path.
 | 6 | Risk and sizing | ✅ complete |
 | 7 | Research loop | ✅ complete |
 | 8 | Incubation and promotion | ✅ complete |
-| 9 | Execution | ⬜ pending |
+| 9 | Execution | ✅ complete (testnet only; no credentials exist) |
 | 10 | Monitoring and retirement | ⬜ pending |
 | 11 | Operations | ⬜ pending |
 

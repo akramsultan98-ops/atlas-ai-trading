@@ -5,6 +5,20 @@ versions by implementation phase rather than semver until Phase 11.
 
 ## [Unreleased]
 
+### Phase 9 — Execution
+- Signed Binance spot broker; testnet default, live requires an explicit choice
+  and refuses to build an HTTP client implicitly (EXEC-01)
+- Bracketed entry: stop placed with the entry, entry reversed if the stop is
+  rejected, and a distinct error when the reversal also fails (EXEC-02)
+- Deterministic client order IDs hashed from the decision, so a replayed signal
+  collides with the original order instead of doubling up (EXEC-03)
+- Reconciliation repairs local state from the exchange and arms the kill switch
+  on unrecorded exposure or balance drift (EXEC-04, EXEC-05)
+- Kill switch checked immediately before every entry transmission; protective
+  orders still permitted while armed (EXEC-06, KILL-03)
+- Retryable vs terminal rejection classification (EXEC-09)
+- Order intent logged before the network call and the result after (EXEC-10)
+
 ### Phase 8 — Incubation and promotion
 - Zero-capital incubation tracker resolving paper signals pessimistically, the
   same rule the backtest uses (INC-01..03)
