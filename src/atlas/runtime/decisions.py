@@ -20,11 +20,11 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
-# ATLAS has no regime filter. The pipeline is: data -> validation -> rule evaluation ->
-# risk -> sizing -> execution. Reporting a regime verdict would mean inventing a gate
-# that does not exist, so the field states its own absence instead: an operator looking
-# for the regime step learns there is none, rather than being left to wonder.
-REGIME_NOT_IMPLEMENTED = "NOT_IMPLEMENTED: ATLAS has no regime filter"
+# The regime is measured from candles by `atlas.intel.regime` (trend and volatility;
+# risk-on/risk-off needs cross-asset data and reports UNAVAILABLE rather than guessing).
+# It is reported for every symbol that had data. It does not gate entries: the strategy
+# spec decides that, and a regime filter nobody specified would be an invented rule.
+REGIME_NOT_MEASURED = "NOT_MEASURED: no market data this tick"
 
 
 class DecisionOutcome(StrEnum):
@@ -98,7 +98,7 @@ class SymbolDecision:
     bar_age_seconds: float | None = None
     # Rule-based, not scored: the per-condition truth table from `evaluator.explain`.
     conditions: list[dict[str, Any]] = field(default_factory=list)
-    regime: str = REGIME_NOT_IMPLEMENTED
+    regime: str = REGIME_NOT_MEASURED
     signal: bool = False
     reference_price: Decimal | None = None
     stop_price: Decimal | None = None
@@ -204,7 +204,7 @@ def render_decisions(decisions: list[SymbolDecision]) -> str:
 
 
 __all__ = [
-    "REGIME_NOT_IMPLEMENTED",
+    "REGIME_NOT_MEASURED",
     "DecisionOutcome",
     "SymbolDecision",
     "render_decisions",

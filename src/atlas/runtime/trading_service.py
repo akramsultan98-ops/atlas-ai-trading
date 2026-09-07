@@ -28,6 +28,7 @@ from atlas.execution.brackets import open_bracketed_position
 from atlas.execution.broker import BinanceSpotBroker, OrderRejection
 from atlas.execution.ledger import Ledger
 from atlas.execution.reconcile import Reconciler
+from atlas.intel.regime import classify_regime
 from atlas.killswitch import KillSwitch
 from atlas.models import AuditEventType, KillSwitchTrigger, StrategyStatus, utcnow
 from atlas.monitor.health import compute_health
@@ -56,6 +57,7 @@ def _decision(
     outcome: DecisionOutcome,
     detail: str,
     *,
+    regime: str,
     data_valid: bool | None = None,
     conditions: list[dict[str, Any]] | None = None,
     signal: Signal | None = None,
@@ -76,6 +78,7 @@ def _decision(
         bars=len(series.bars),
         last_bar_close=last_close.isoformat(),
         bar_age_seconds=bar_age,
+        regime=regime,
         data_valid=data_valid,
         conditions=conditions or [],
         signal=signal is not None,
@@ -294,6 +297,9 @@ class TradingService:
 
                 last_index = len(series.bars) - 1
                 last_close = series.bars[last_index].close_time
+                # Deterministic, from candles alone. Reported on every decision so a
+                # quiet tick can be read against the market it was quiet in.
+                regime = classify_regime(series.bars).label
                 stale, age = check_staleness(last_close, series.timeframe, now=reference)
                 report = validate_series(series)
                 if not report.valid:
@@ -307,6 +313,7 @@ class TradingService:
                             age,
                             DecisionOutcome.DATA_INVALID,
                             "; ".join(report.reasons),
+                            regime=regime,
                             data_valid=False,
                         )
                     )
@@ -329,6 +336,7 @@ class TradingService:
                             age,
                             DecisionOutcome.DATA_STALE,
                             f"last bar closed {age:.0f}s ago; kill switch armed",
+                            regime=regime,
                             data_valid=True,
                         )
                     )
@@ -344,6 +352,7 @@ class TradingService:
                             age,
                             DecisionOutcome.POSITION_ALREADY_OPEN,
                             "RISK-08 permits one position per symbol",
+                            regime=regime,
                             data_valid=True,
                         )
                     )
@@ -365,6 +374,7 @@ class TradingService:
                             age,
                             DecisionOutcome.NO_SIGNAL,
                             "no entry rule fired on the last closed bar",
+                            regime=regime,
                             data_valid=True,
                             conditions=rules,
                         )
@@ -398,6 +408,7 @@ class TradingService:
                             age,
                             DecisionOutcome.FILTERS_UNAVAILABLE,
                             str(exc),
+                            regime=regime,
                             data_valid=True,
                             conditions=rules,
                             signal=signal,
@@ -440,6 +451,7 @@ class TradingService:
                             age,
                             DecisionOutcome.RISK_REJECTED,
                             f"sizing refused the trade: {sizing.reason}",
+                            regime=regime,
                             data_valid=True,
                             conditions=rules,
                             signal=signal,
@@ -475,6 +487,7 @@ class TradingService:
                             age,
                             DecisionOutcome.HALTED,
                             "kill switch armed between sizing and transmission",
+                            regime=regime,
                             data_valid=True,
                             conditions=rules,
                             signal=signal,
@@ -495,6 +508,7 @@ class TradingService:
                             age,
                             DecisionOutcome.ORDER_REJECTED,
                             str(exc),
+                            regime=regime,
                             data_valid=True,
                             conditions=rules,
                             signal=signal,
@@ -518,6 +532,7 @@ class TradingService:
                         DecisionOutcome.ENTERED,
                         "every rule condition held, risk accepted the size, and the "
                         "exchange accepted the bracket",
+                        regime=regime,
                         data_valid=True,
                         conditions=rules,
                         signal=signal,

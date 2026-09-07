@@ -209,3 +209,27 @@ Each unit test passed; the system they formed did not meet the requirement.
 | AI-02 research cannot execute | `research/tools.py` allowlist | `test_factory.py::test_research_cannot_reach_the_control_plane`, `::test_the_research_module_imports_nothing_that_executes` |
 | AI-05 research cannot promote | no automated caller; no CLI verb | `test_factory.py::test_promotion_has_no_automated_caller`, `::test_no_cli_command_can_promote` |
 | Operator can inspect the factory | `atlas factory ...` | `test_factory_cli.py` (14 tests) |
+
+## Analysis quality (atlas.intel)
+
+| Requirement | Implementation | Test |
+|---|---|---|
+| The seven analysis parts never collapse | `intel/evidence.py::AnalysisRecord` | `test_intel.py::test_an_interpretation_without_a_fact_is_refused`, `::test_a_record_carries_no_decision` |
+| Repetition is not corroboration | `intel/events.py::deduplicate` | `test_intel.py::test_the_same_story_from_five_aggregators_is_one_observation` |
+| Source conflict recorded, not resolved | `CorroboratedEvent.conflicting_directions` | `test_intel.py::test_sources_disagreeing_is_recorded_not_resolved` |
+| Regime measured from candles only | `intel/regime.py::classify_regime` | `test_intel.py::test_a_round_trip_is_ranging_not_trending`, `::test_risk_on_off_is_unavailable_from_one_symbol` |
+| Regime reported on every tick decision | `trading_service._decision` | `test_decisions.py::test_a_decision_with_data_carries_the_measured_regime` |
+| Confluence across independent groups | `intel/confluence.py::decide` | `test_intel.py::test_agreement_across_independent_groups_can_trade` |
+| A confident model alone cannot trade | market-measured group requirement | `test_intel.py::test_a_confident_model_alone_cannot_trade` |
+| Every abstention reason distinguishable | `Decision` | `test_intel.py::test_every_abstention_reason_is_distinguishable` |
+| Stated confidence is not a probability | `intel/calibration.py::calibrate` | `test_intel.py::test_a_model_claiming_ninety_percent_is_uncalibrated_without_history` |
+| Poor calibration is reported | `calibrate` notes, `calibration_report` | `test_intel.py::test_a_poorly_calibrated_bucket_says_so`, `::test_the_calibration_report_shows_claimed_against_observed` |
+| Abstentions never counted as correct | `intel/metrics.py::evaluate` | `test_intel.py::test_abstentions_are_never_counted_as_correct` |
+| Accuracy broken out by regime | `AccuracyReport.by_regime` | `test_intel.py::test_accuracy_is_broken_out_by_regime` |
+| No look-ahead / future-event contamination | `intel/splits.py::assert_no_lookahead`, `events.visible_at` | `test_intel.py::test_future_events_are_invisible_to_a_past_decision`, `test_intel_containment.py::test_a_backdated_event_cannot_justify_a_past_decision` |
+| Held-out phases do not overlap | `EvaluationPlan` | `test_intel.py::test_overlapping_phases_are_refused` |
+| Ordinary candles spend no tokens | `intel/triage.py::triage` | `test_intel.py::test_an_ordinary_candle_does_not_spend_a_model_call` |
+| Research outage never stops ATLAS | `triage(research_available=False)` | `test_intel.py::test_a_research_outage_leaves_atlas_running` |
+| A model cannot instruct an execution | `research/tools.py`, strict spec schema | `test_intel_containment.py::test_a_model_asking_to_trade_reaches_no_such_tool`, `::test_an_order_shaped_model_output_is_not_a_strategy` |
+| Hallucinated event cannot reach a trade | single-source detection + confluence | `test_intel_containment.py::test_a_single_hallucinated_event_cannot_reach_a_trade` |
+| Provider disagreement abstains | `decide` | `test_intel_containment.py::test_two_providers_disagreeing_abstains` |

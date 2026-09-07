@@ -18,7 +18,7 @@ from atlas.errors import AtlasError
 from atlas.killswitch import KillSwitch
 from atlas.models import AuditEventType, KillSwitchTrigger
 from atlas.runtime.decisions import (
-    REGIME_NOT_IMPLEMENTED,
+    REGIME_NOT_MEASURED,
     DecisionOutcome,
     SymbolDecision,
     render_decisions,
@@ -614,7 +614,7 @@ def _decision_from_payload(payload: dict[str, Any]) -> SymbolDecision:
         last_bar_close=payload.get("last_bar_close"),
         bar_age_seconds=payload.get("bar_age_seconds"),
         conditions=list(payload.get("conditions") or []),
-        regime=str(payload.get("regime", REGIME_NOT_IMPLEMENTED)),
+        regime=str(payload.get("regime", REGIME_NOT_MEASURED)),
         signal=bool(payload.get("signal", False)),
         reference_price=num("reference_price"),
         stop_price=num("stop_price"),

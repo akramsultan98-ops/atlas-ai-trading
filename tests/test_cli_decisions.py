@@ -99,7 +99,7 @@ def test_decisions_renders_the_recorded_reason(
     out = capsys.readouterr().out
     assert "BTCUSDT: NO_STRATEGY" in out
     assert "no strategy with status LIVE targets this symbol" in out
-    assert "no regime filter" in out
+    assert "NOT_MEASURED" in out
 
 
 def test_decisions_json_is_machine_readable(

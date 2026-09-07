@@ -26,7 +26,7 @@ from atlas.killswitch import KillSwitch
 from atlas.models import AuditEventType, ExchangeEnv, KillSwitchTrigger, StrategyStatus
 from atlas.risk.limits import AccountState
 from atlas.risk.sizing import ExchangeFilters, RejectReason
-from atlas.runtime.decisions import REGIME_NOT_IMPLEMENTED, DecisionOutcome, render_decisions
+from atlas.runtime.decisions import REGIME_NOT_MEASURED, DecisionOutcome, render_decisions
 from atlas.runtime.trading_service import TradingService
 from atlas.strategy.evaluator import explain
 from atlas.strategy.registry import StrategyRegistry
@@ -372,16 +372,28 @@ def test_explain_on_empty_bars_is_empty_not_an_error() -> None:
     assert explain(percent_spec(), []) == []
 
 
-def test_render_states_that_there_is_no_regime_filter(
+def test_a_symbol_with_no_data_reports_the_regime_as_unmeasured(
     db: Database, audit: AuditLog, killswitch: KillSwitch
 ) -> None:
-    """An operator looking for the regime step learns there is none, rather than
-    being left to wonder whether it silently rejected the trade."""
+    """Unmeasured, not calm. The two must never look the same to a reader."""
     killswitch.initialise()
     text = render_decisions(_tick(_service(db, audit, killswitch)).decisions)  # type: ignore[attr-defined]
 
-    assert REGIME_NOT_IMPLEMENTED in text
-    assert "NOT_IMPLEMENTED" in text
+    assert REGIME_NOT_MEASURED in text
+
+
+def test_a_decision_with_data_carries_the_measured_regime(
+    db: Database, audit: AuditLog, killswitch: KillSwitch
+) -> None:
+    killswitch.initialise()
+    _live(db)
+    decision = _only(_tick(_service(db, audit, killswitch), {"BTCUSDT": _flat_series(NOW)}))
+
+    assert decision.regime != REGIME_NOT_MEASURED  # type: ignore[attr-defined]
+    assert "/" in decision.regime, "trend/volatility/risk"  # type: ignore[attr-defined]
+    assert "UNAVAILABLE" in decision.regime, (  # type: ignore[attr-defined]
+        "risk-on/risk-off needs cross-asset data and must say so rather than guess"
+    )
 
 
 def test_render_with_no_symbols_is_not_a_crash() -> None:

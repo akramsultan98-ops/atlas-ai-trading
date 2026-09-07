@@ -5,6 +5,57 @@ versions by implementation phase rather than semver until Phase 11.
 
 ## [Unreleased]
 
+### Analysis quality: evidence-driven, regime-aware, calibrated, able to abstain
+`atlas.intel` — the LLM is an analyst and hypothesis generator here, never the decision
+maker. No single model response can produce a trade.
+
+- **The seven parts stay separate** (`intel/evidence.py`): observed fact, source,
+  model interpretation, market-impact hypothesis, confidence, horizon. A record with an
+  interpretation but no fact is refused at construction — a model talking about nothing
+  is not analysis. Records carry no decision field at all: what ATLAS does is decided
+  downstream by deterministic code from many records.
+- **Events, not headlines** (`intel/events.py`): dedup is by content, and corroboration
+  counts *distinct sources*, so one wire story republished five times is one
+  observation. Sources that disagree are recorded as conflicting and the claim is
+  suppressed, never resolved in favour of the newest or loudest. An event observed
+  before it was published is refused: one of the two clocks is wrong.
+- **Regime is measured, not asserted** (`intel/regime.py`): trend by directional
+  efficiency (a market that ends where it started after a large round trip is *ranging*,
+  not flat-trending) and volatility by range ratio. Risk-on/risk-off needs cross-asset
+  data, so it reports `UNAVAILABLE` rather than inferring it from one pair's direction.
+  Too little data reports `UNCLEAR`, which is not the same as calm. Every tick decision
+  now carries the measured regime — replacing the `NOT_IMPLEMENTED` placeholder.
+- **Confluence, not averaging** (`intel/confluence.py`): evidence is grouped into
+  independent families and agreement is required *across* them. A hypothesis supported
+  only by narrative groups cannot trade however confident the model is — conviction is
+  not evidence. One opposing family abstains rather than being outvoted.
+- **Abstention is a first-class outcome**: `NO_TRADE`, `INSUFFICIENT_EVIDENCE`,
+  `CONFLICTING_EVIDENCE`, `STALE_INTELLIGENCE`, `UNCONFIRMED_EVENT`, `REGIME_UNCLEAR`.
+- **Confidence is four separate quantities** (`intel/calibration.py`): model-asserted,
+  evidence-counted, historically measured, and calibrated probability. A stated 0.9 is
+  `UNCALIBRATED` until at least 30 resolved outcomes exist in that bucket, and
+  `calibrated_probability` is then `None` — no fallback number, because any number
+  there would be read as a probability. A bucket claiming 0.9 that resolves at 0.67 is
+  reported as poorly calibrated, with both numbers shown.
+- **Accuracy that cannot flatter itself** (`intel/metrics.py`): abstentions are never
+  counted as correct and abstention rate is reported beside accuracy, never folded in.
+  Directional accuracy, precision, recall, F1, false-positive rate, win rate, profit
+  factor, expectancy, max drawdown — each broken out by regime, event category and
+  confidence bucket. `is_reportable` is false when nothing has resolved, so no accuracy
+  claim can be made from an empty set.
+- **Leakage guards** (`intel/splits.py`): five chronological phases with no overlap;
+  overlapping windows are refused because a held-out set that overlaps research was
+  already seen. `assert_no_lookahead` raises rather than filtering — silently dropping
+  future data hides that the caller built a leaking dataset. Only OUT_OF_SAMPLE,
+  FORWARD_INCUBATION and LIVE are marked as evidence of skill.
+- **Token control** (`intel/triage.py`): deterministic → shallow → deep, reached only
+  when a case is both uncertain and consequential. An already-seen event does not buy a
+  second opinion. Budget exhaustion degrades the tier and never fails the tick, and with
+  no provider configured everything returns DETERMINISTIC (AI-08).
+
+**No accuracy claim is made.** There is no out-of-sample evidence yet, so the framework
+reports `reportable: false` rather than a number.
+
 ### The research plane is now runnable from configuration
 - `ATLAS_RESEARCH_PROVIDER` / `ATLAS_RESEARCH_API_KEY` / `ATLAS_RESEARCH_MODEL`. The
   research credential is separate from the exchange credential and neither plane holds
