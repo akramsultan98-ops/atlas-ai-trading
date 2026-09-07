@@ -168,3 +168,18 @@ Each unit test passed; the system they formed did not meet the requirement.
 | Exit legs resolved by client id, not array order | `broker._parse_oco` | `test_position_lifecycle.py::test_the_exit_legs_are_matched_by_id_not_by_position` |
 | A half-answered OCO is not a protected position | `broker._parse_oco` | `test_position_lifecycle.py::test_a_half_answered_oco_is_a_rejection` |
 | KILL-03 protective orders allowed while armed | `BinanceSpotBroker.place_oco` | `test_position_lifecycle.py::test_the_exit_pair_is_placeable_while_the_switch_is_armed` |
+
+## Tick decision observability
+
+| Requirement | Implementation | Test |
+|---|---|---|
+| Every configured symbol reports an outcome | `TradingService.tick` iterates the configured universe | `test_decisions.py::test_every_configured_symbol_gets_a_decision` |
+| A no-entry decision carries a machine-readable reason | `DecisionOutcome`, `SymbolDecision` | `test_decisions.py::test_a_quiet_tick_says_why_it_was_quiet` |
+| An entry decision is observable | `_decision(... ENTERED)` | `test_decisions.py::test_an_entry_records_why_it_was_allowed` |
+| Risk rejection distinguishable from no signal | separate outcomes, `signal` flag retained | `test_decisions.py::test_no_signal_and_risk_rejection_are_different_outcomes` |
+| Missing strategy/data distinguishable from no signal | `NO_STRATEGY`, `NO_MARKET_DATA` vs `NO_SIGNAL` | `test_decisions.py::test_missing_data_is_not_a_no_signal`, `::test_the_three_families_are_distinguishable` |
+| Rule evaluation is explainable (no score exists) | `evaluator.explain` truth table | `test_decisions.py::test_a_no_signal_decision_carries_the_condition_truth_table` |
+| Reasoning survives the process | `AuditEventType.TICK_DECISION` | `test_decisions.py::test_the_decision_is_written_to_the_audit_trail` |
+| Safety gates unchanged | kill switch and DATA-05 paths | `test_decisions.py::test_an_armed_switch_still_blocks_and_is_now_explained`, `::test_stale_data_still_arms_the_switch`, `::test_reporting_never_places_an_order` |
+| Operator can read decisions back | `atlas decisions` | `test_cli_decisions.py::test_decisions_renders_the_recorded_reason`, `::test_decisions_json_is_machine_readable` |
+| Audit chain intact with the new event type | `AuditLog.verify_chain` | `test_cli_decisions.py::test_the_audit_chain_still_verifies_with_decisions_in_it` |

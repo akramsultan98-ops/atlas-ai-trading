@@ -122,7 +122,14 @@ untested and is written from the API contract, not from observed behaviour.
    - `feasible_stop_band_<SYMBOL>` non-empty. `EMPTY` means the balance is too small
      to size any trade at the intended risk — fund the account or nothing will trade.
 4. `atlas killswitch init` — the deliberate release to trade.
-5. `atlas run --once` — one cycle. Inspect with `atlas audit tail`.
+5. `atlas run --once --explain` — one cycle, printing the decision for every
+   configured symbol. `atlas decisions` replays the same from the audit trail, and
+   `--json` gives the machine-readable form.
+
+   **`NO_STRATEGY` is the expected result on a fresh install.** It means no strategy
+   has status LIVE, so the entry pipeline never ran. It is not a fault, and no amount
+   of market data will change it: a strategy has to be generated, backtested,
+   independently verified, gated, incubated and promoted before anything can trade.
 6. Confirm in order, in the audit trail and the database:
    - klines fetched and validated
    - entry submitted (`ORDER_INTENT` before the network call) and acknowledged

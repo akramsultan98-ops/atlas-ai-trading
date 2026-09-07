@@ -6,7 +6,9 @@ Deliberately minimal and human-only. Nothing here is reachable from the advisory
 from __future__ import annotations
 
 import argparse
+import json
 import sys
+from decimal import Decimal
 from typing import Any
 
 from atlas.audit import AuditLog
@@ -14,7 +16,13 @@ from atlas.config import load_settings
 from atlas.db.engine import Database
 from atlas.errors import AtlasError
 from atlas.killswitch import KillSwitch
-from atlas.models import KillSwitchTrigger
+from atlas.models import AuditEventType, KillSwitchTrigger
+from atlas.runtime.decisions import (
+    REGIME_NOT_IMPLEMENTED,
+    DecisionOutcome,
+    SymbolDecision,
+    render_decisions,
+)
 
 
 def _build(settings_data_dir_required: bool = True) -> tuple[Database, KillSwitch, AuditLog]:
@@ -55,6 +63,16 @@ def main(argv: list[str] | None = None) -> int:
     rn = sub.add_parser("run", help="start the ATLAS trading service")
     rn.add_argument("--ticks", type=int, default=0, help="0 = run until stopped")
     rn.add_argument("--once", action="store_true", help="run a single tick and exit")
+    rn.add_argument(
+        "--explain",
+        action="store_true",
+        help="print the decision for every configured symbol after the tick",
+    )
+    rn.add_argument("--json", action="store_true", help="with --explain, emit JSON")
+
+    dc = sub.add_parser("decisions", help="why the last tick did what it did, per symbol")
+    dc.add_argument("-n", type=int, default=1, help="how many ticks back to show")
+    dc.add_argument("--json", action="store_true")
 
     au = sub.add_parser("audit", help="audit trail")
     au_sub = au.add_subparsers(dest="action", required=True)
@@ -90,6 +108,8 @@ def main(argv: list[str] | None = None) -> int:
             elif args.action == "disarm":
                 rec = killswitch.disarm(args.reason, args.actor, human_confirmed=args.confirm)
                 print(f"DISARMED: {rec.reason}")
+        elif args.group == "decisions":
+            return _decisions(audit, args)
         elif args.group == "audit":
             if args.action == "verify":
                 n = audit.verify_chain()
@@ -197,6 +217,11 @@ def _runtime_command(args: argparse.Namespace) -> int:
                 result.entries_rejected,
                 result.retired or "none",
             )
+            if getattr(args, "explain", False):
+                if getattr(args, "json", False):
+                    print(json.dumps([d.as_dict() for d in result.decisions], indent=2))
+                else:
+                    print(render_decisions(result.decisions))
             return 0
 
         max_ticks = args.ticks if args.ticks > 0 else 10**9
@@ -224,6 +249,66 @@ def _runtime_command(args: argparse.Namespace) -> int:
         return 1
     finally:
         service.close()
+
+
+def _decisions(audit: AuditLog, args: argparse.Namespace) -> int:
+    """Replay the recorded per-symbol decisions from the audit trail.
+
+    Read from the audit log rather than recomputed, so what is shown is what the
+    running process actually decided - including on a tick this command was not there
+    for. The audit chain is append-only and hash-linked, so it cannot be edited to
+    agree with a later opinion.
+    """
+    events = [e for e in audit.tail(2000) if e.event_type is AuditEventType.TICK_DECISION]
+    if not events:
+        print(
+            "no tick decisions recorded yet. Run `atlas run --once` first; if that has "
+            "already run, this build predates decision recording."
+        )
+        return 1
+
+    # Events arrive oldest-first; group by symbol and keep the last n per symbol.
+    per_symbol: dict[str, list[dict[str, Any]]] = {}
+    for event in events:
+        per_symbol.setdefault(str(event.payload.get("symbol", "?")), []).append(event.payload)
+
+    wanted = max(1, args.n)
+    latest = [payload for rows in per_symbol.values() for payload in rows[-wanted:]]
+
+    if args.json:
+        print(json.dumps(latest, indent=2))
+        return 0
+
+    print(render_decisions([_decision_from_payload(p) for p in latest]))
+    return 0
+
+
+def _decision_from_payload(payload: dict[str, Any]) -> SymbolDecision:
+    """Rebuild a decision from its audit record for display only."""
+
+    def num(key: str) -> Decimal | None:
+        raw = payload.get(key)
+        return None if raw is None else Decimal(str(raw))
+
+    return SymbolDecision(
+        symbol=str(payload.get("symbol", "?")),
+        outcome=DecisionOutcome(str(payload.get("outcome", "NO_STRATEGY"))),
+        detail=str(payload.get("detail", "")),
+        strategy_id=payload.get("strategy_id"),
+        bars=payload.get("bars"),
+        data_valid=payload.get("data_valid"),
+        last_bar_close=payload.get("last_bar_close"),
+        bar_age_seconds=payload.get("bar_age_seconds"),
+        conditions=list(payload.get("conditions") or []),
+        regime=str(payload.get("regime", REGIME_NOT_IMPLEMENTED)),
+        signal=bool(payload.get("signal", False)),
+        reference_price=num("reference_price"),
+        stop_price=num("stop_price"),
+        target_price=num("target_price"),
+        risk_reason=payload.get("risk_reason"),
+        quantity=num("quantity"),
+        notional=num("notional"),
+    )
 
 
 if __name__ == "__main__":

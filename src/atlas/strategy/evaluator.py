@@ -11,7 +11,9 @@ fixed before the position exists and cannot drift with later data.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from decimal import Decimal
+from typing import Any
 
 from atlas.data.models import Kline
 from atlas.errors import ValidationError
@@ -168,6 +170,100 @@ def _target_price(
         return None
     target = reference + distance if side is PositionSide.LONG else reference - distance
     return target if target > 0 else None
+
+
+def _render_operand(operand: Operand) -> str:
+    """Name an operand the way the spec author wrote it."""
+    if operand.kind is OperandKind.CONSTANT:
+        return str(operand.value)
+    return str(operand.ref)
+
+
+@dataclass(frozen=True)
+class ConditionResult:
+    """One condition on one bar, with the numbers it was actually decided on."""
+
+    left: str
+    op: str
+    right: str
+    left_value: Decimal | None
+    right_value: Decimal | None
+    passed: bool
+
+    def render(self) -> str:
+        left = "n/a" if self.left_value is None else str(self.left_value)
+        right = "n/a" if self.right_value is None else str(self.right_value)
+        mark = "PASS" if self.passed else "FAIL"
+        return f"{mark} {self.left}({left}) {self.op} {self.right}({right})"
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "left": self.left,
+            "op": self.op,
+            "right": self.right,
+            "left_value": None if self.left_value is None else str(self.left_value),
+            "right_value": None if self.right_value is None else str(self.right_value),
+            "passed": self.passed,
+        }
+
+
+@dataclass(frozen=True)
+class RuleResult:
+    """One entry rule on one bar. A rule fires only when every condition holds."""
+
+    side: PositionSide
+    conditions: tuple[ConditionResult, ...]
+
+    @property
+    def passed(self) -> bool:
+        return all(c.passed for c in self.conditions)
+
+    @property
+    def failed_conditions(self) -> tuple[ConditionResult, ...]:
+        return tuple(c for c in self.conditions if not c.passed)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "side": str(self.side),
+            "passed": self.passed,
+            "conditions": [c.as_dict() for c in self.conditions],
+        }
+
+
+def explain(
+    spec: StrategySpec, bars: Sequence[Kline], index: int | None = None
+) -> list[RuleResult]:
+    """Evaluate the entry rules on one bar and report *why* each did or did not fire.
+
+    ATLAS strategies are rule-based, not scored: a spec is a set of boolean conditions
+    (STRAT-02), so there is no single number to report as a score or a threshold. The
+    honest equivalent - and the more useful one for diagnosing a quiet tick - is the
+    condition-by-condition truth table with the operand values it was decided on.
+
+    This is a read-only view of the same operands and comparators `evaluate` uses. It
+    decides nothing and changes nothing.
+    """
+    if not bars:
+        return []
+
+    at = len(bars) - 1 if index is None else index
+    computed = _compute_indicators(spec, bars)
+
+    results: list[RuleResult] = []
+    for rule in spec.entries:
+        conditions = tuple(
+            ConditionResult(
+                left=_render_operand(condition.left),
+                op=str(condition.op),
+                right=_render_operand(condition.right),
+                left_value=_operand_value(condition.left, at, bars, computed),
+                right_value=_operand_value(condition.right, at, bars, computed),
+                passed=_evaluate_condition(condition, at, bars, computed),
+            )
+            for condition in rule.conditions
+        )
+        results.append(RuleResult(side=rule.side, conditions=conditions))
+    return results
 
 
 def evaluate(spec: StrategySpec, bars: Sequence[Kline]) -> list[Signal]:

@@ -5,6 +5,40 @@ versions by implementation phase rather than semver until Phase 11.
 
 ## [Unreleased]
 
+### Why the tick did what it did
+A tick reporting `entries=0` was indistinguishable from a tick that had declined the
+market, one that never looked because nothing was deployed, and one that wanted to
+trade and was refused by risk. Those three have different remedies and the audit trail
+recorded the same thing for all of them: nothing.
+
+- Every configured symbol now produces exactly one `SymbolDecision` per tick with a
+  machine-readable `DecisionOutcome`. The outcomes separate three families that were
+  previously one silence: *absence* (`NO_STRATEGY`, `SPEC_MISSING` — nothing was
+  evaluated), *unobservable market* (`NO_MARKET_DATA`, `DATA_INVALID`, `DATA_STALE`),
+  and *judgement* (`NO_SIGNAL`, `POSITION_ALREADY_OPEN`, `RISK_REJECTED`,
+  `ORDER_REJECTED`, `ENTERED`).
+- The entry loop iterates the configured universe rather than only live strategies. A
+  symbol with nothing deployed against it was invisible to that loop — precisely the
+  case that most needs reporting. A live strategy on an *unconfigured* symbol is now
+  reported too; it previously fetched no data and took no entry, silently.
+- `evaluator.explain` reports the per-condition truth table with the operand values a
+  rule was actually decided on. ATLAS strategies are boolean rules, not scored
+  (STRAT-02), so there is no score or threshold number to report; the truth table is
+  the honest and more useful equivalent.
+- Decisions are written to the hash-chained audit log as `TICK_DECISION`, so the
+  reasoning survives the process and can be read back after the fact.
+- `atlas run --once --explain` prints the decision for every symbol; `--json` emits it
+  machine-readably. `atlas decisions` replays the last recorded decision per symbol
+  from the audit trail.
+- `cli.py` had **no test coverage at all**. The decision surface is now tested, taking
+  the module from 0% to 45%.
+
+There is no regime filter in ATLAS. Rather than omit the step or invent a verdict for
+it, every decision carries `regime: NOT_IMPLEMENTED`, so an operator looking for that
+stage learns it does not exist instead of wondering whether it rejected the trade.
+
+No risk parameter, threshold, strategy rule or safety gate changed.
+
 ### The exit side of a trade
 - **No take-profit order was ever placed.** Specification line 57 puts stop *and target*
   enforcement in the control plane, STRAT-02/03 require a target rule on every spec, and

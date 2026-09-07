@@ -361,6 +361,9 @@ class AtlasService:
             exchange_orders=exchange_orders,
             live_returns=live_returns,
             backtest_stats=backtest_stats,
+            # The configured universe, not just the symbols that returned data: a
+            # symbol whose fetch failed still has to report that it did.
+            symbols=self.settings.symbol_list,
         )
 
         self.heartbeat.beat(
