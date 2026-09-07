@@ -23,6 +23,8 @@ from atlas.backtest.costs import DEFAULT_COSTS, CostModel
 from atlas.backtest.engine import run_backtest
 from atlas.data.models import KlineSeries
 from atlas.db.engine import Database
+from atlas.factory.provenance import config_hash
+from atlas.factory.store import OUT_OF_SAMPLE, PRIMARY, FactoryStore
 from atlas.models import AuditEventType, StrategyStatus, utcnow
 from atlas.research.generator import (
     GenerationRecord,
@@ -85,12 +87,19 @@ class ResearchLoop:
         self._audit = audit
         self._client = client
         self._registry = StrategyRegistry(db)
+        self._store = FactoryStore(db)
         self._policy = policy
         self._filters = filters or ExchangeFilters()
         self._thresholds = thresholds or SelectionThresholds()
         self._costs = costs
         self._equity = starting_equity
         self._in_sample_fraction = in_sample_fraction
+        self._config_hash = config_hash(
+            policy=self._policy,
+            filters=self._filters,
+            costs=self._costs,
+            starting_equity=self._equity,
+        )
 
     def run_once(self, series: KlineSeries, variant: int = 0) -> CandidateOutcome:
         run_id = str(uuid.uuid4())
@@ -123,6 +132,13 @@ class ResearchLoop:
 
         in_sample, out_of_sample = series.split_chronological(self._in_sample_fraction)
 
+        # The candidate is persisted before it is judged. A rejected candidate with its
+        # evidence on file is analysable; one discarded at the point of rejection tells
+        # nobody why 99% of candidates fail, which is the number the factory exists to
+        # move. Registration is idempotent on the spec hash, so re-proposing the same
+        # rules re-uses the same strategy rather than forking its history.
+        strategy_id = self._registry.register(spec)
+
         # --- stage 3: primary backtest -----------------------------------------
         primary = run_backtest(
             spec,
@@ -143,13 +159,35 @@ class ResearchLoop:
             costs=self._costs,
         )
         verification = compare(primary, verifier)
+
+        primary_id = self._store.record_backtest(
+            strategy_id, primary, in_sample, engine=PRIMARY, config_hash=self._config_hash
+        )
+        verifier_id = self._store.record_verifier_run(
+            strategy_id,
+            verifier,
+            in_sample,
+            cost_model=primary.cost_model,
+            config_hash=self._config_hash,
+        )
+        self._store.record_verification(
+            strategy_id,
+            verification,
+            primary_backtest_id=primary_id,
+            verifier_backtest_id=verifier_id,
+        )
+
         if not verification.passed:
+            # Left CANDIDATE, not REJECTED: a verification mismatch accuses the engines,
+            # not the strategy, and rejecting the candidate would quietly discard the
+            # evidence of a possible engine defect.
             return self._record(
                 run_id,
                 Stage.VERIFICATION,
                 False,
                 "; ".join(verification.reasons),
                 generation,
+                strategy_id=strategy_id,
                 spec_hash=spec_hash,
                 engine_defect=verification.engine_defect_suspected,
             )
@@ -165,24 +203,31 @@ class ResearchLoop:
         )
         signals = evaluate(spec, in_sample.bars)
         median_stop = _median_stop_distance(signals)
+        self._store.record_backtest(
+            strategy_id, oos, out_of_sample, engine=OUT_OF_SAMPLE, config_hash=self._config_hash
+        )
         selection = evaluate_gates(
             primary.stats,
             out_of_sample=oos.stats,
             median_stop_distance=median_stop,
             thresholds=self._thresholds,
         )
+        self._store.record_selection(strategy_id, selection)
         if not selection.passed:
+            self._registry.set_status(strategy_id, StrategyStatus.REJECTED)
             return self._record(
                 run_id,
                 Stage.SELECTION,
                 False,
                 "; ".join(g.detail for g in selection.failures),
                 generation,
+                strategy_id=strategy_id,
                 spec_hash=spec_hash,
             )
 
-        # --- accepted: persist as VERIFIED, awaiting incubation -----------------
-        strategy_id = self._registry.register(spec)
+        # --- accepted: VERIFIED, awaiting an operator to begin incubation -------
+        # Not INCUBATING: starting the observation clock is a deliberate act with a
+        # recorded start time (INC-01), never a side effect of a batch run.
         self._registry.set_status(strategy_id, StrategyStatus.VERIFIED)
         return self._record(
             run_id,

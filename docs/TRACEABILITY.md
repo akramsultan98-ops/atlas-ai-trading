@@ -183,3 +183,29 @@ Each unit test passed; the system they formed did not meet the requirement.
 | Safety gates unchanged | kill switch and DATA-05 paths | `test_decisions.py::test_an_armed_switch_still_blocks_and_is_now_explained`, `::test_stale_data_still_arms_the_switch`, `::test_reporting_never_places_an_order` |
 | Operator can read decisions back | `atlas decisions` | `test_cli_decisions.py::test_decisions_renders_the_recorded_reason`, `::test_decisions_json_is_machine_readable` |
 | Audit chain intact with the new event type | `AuditLog.verify_chain` | `test_cli_decisions.py::test_the_audit_chain_still_verifies_with_decisions_in_it` |
+
+## Strategy factory
+
+| Requirement | Implementation | Test |
+|---|---|---|
+| STRAT-06 deterministic content hash | `StrategySpec.content_hash` | `test_factory.py::test_the_same_rules_hash_the_same` |
+| Candidate starts as CANDIDATE with an id and timestamp | `StrategyRegistry.register` | `test_factory.py::test_a_candidate_starts_as_CANDIDATE` |
+| STRAT-01 spec is data, never code | strict schema, JSON loader | `test_factory_cli.py::test_hostile_indicator_names_are_rejected`, `::test_specs_are_deserialised_without_eval`, `::test_hostile_text_in_a_free_field_stays_inert_data` |
+| EXEC-08 no trailing stop in the schema | `StrategySpec` | `test_factory_cli.py::test_a_trailing_stop_field_is_rejected` |
+| BT-07 backtest provenance stored | `FactoryStore.record_backtest`, `config_hash` | `test_factory.py::test_a_backtest_is_stored_with_everything_needed_to_reproduce_it` |
+| Backtest determinism | `run_backtest` | `test_factory.py::test_backtest_is_deterministic` |
+| Costs reduce results | `CostModel` | `test_factory.py::test_fees_reduce_the_result` |
+| RISK-09 minNotional feasibility | `size_position` in the engine | `test_factory.py::test_minimum_notional_makes_a_strategy_untradeable` |
+| VER-01 verifier shares no code with the primary | `verify/vector_engine.py` | `test_factory.py::test_the_verifier_shares_no_code_with_the_primary_engine` |
+| VER-04 verification stored | `FactoryStore.record_verification` | `test_factory.py::test_verification_agreement_is_recorded` |
+| SEL-01..07 PASS / FAIL / UNDEFINED_POLICY | `selection/gates.py::GateVerdict` | `test_factory.py::test_a_complete_candidate_can_pass`, `::test_a_failing_gate_blocks`, `::test_a_missing_out_of_sample_window_is_undefined_not_passed` |
+| UNDEFINED_POLICY blocks promotion | `SelectionOutcome.passed` | `test_factory.py::test_undefined_policy_is_reported_machine_readably` |
+| INC-01 measured from recorded start | `incubation_runs`, `IncubationTracker.begin` | `test_factory.py::test_incubation_elapsed_is_measured_from_the_recorded_start`, `::test_the_incubation_clock_cannot_be_restarted` |
+| INC-01/02 block promotion | `check_divergence` | `test_factory.py::test_short_incubation_blocks_promotion`, `::test_too_few_incubation_trades_blocks_promotion` |
+| PROM-01 explicit human approval | `PromotionGate.promote` | `test_factory.py::test_promotion_requires_explicit_human_confirmation`, `::test_promotion_requires_a_named_approver` |
+| No skipping incubation | `PromotionGate.promote` | `test_factory.py::test_a_candidate_cannot_skip_incubation` |
+| Approval cannot override evidence | `PromotionGate.promote` | `test_factory.py::test_failed_gates_block_promotion_even_with_human_approval` |
+| PROM-04 immutable evidence snapshot | `promotions` table | `test_factory.py::test_a_complete_promotion_is_recorded_immutably` |
+| AI-02 research cannot execute | `research/tools.py` allowlist | `test_factory.py::test_research_cannot_reach_the_control_plane`, `::test_the_research_module_imports_nothing_that_executes` |
+| AI-05 research cannot promote | no automated caller; no CLI verb | `test_factory.py::test_promotion_has_no_automated_caller`, `::test_no_cli_command_can_promote` |
+| Operator can inspect the factory | `atlas factory ...` | `test_factory_cli.py` (14 tests) |

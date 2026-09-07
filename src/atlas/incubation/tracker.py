@@ -14,6 +14,7 @@ from decimal import Decimal
 
 from atlas.data.models import Kline, KlineSeries
 from atlas.db.engine import Database
+from atlas.errors import AtlasError
 from atlas.models import PositionSide, utcnow
 from atlas.strategy.evaluator import evaluate
 from atlas.strategy.spec import StrategySpec
@@ -40,11 +41,77 @@ class IncubationSignal:
         return self.outcome in ("WIN", "LOSS")
 
 
+@dataclass(frozen=True)
+class IncubationRun:
+    """When forward observation began, and under what rules."""
+
+    strategy_id: str
+    spec_hash: str
+    config_hash: str
+    started_at: datetime
+    started_by: str
+
+
+class IncubationStateError(AtlasError):
+    """Incubation was used out of order."""
+
+
 class IncubationTracker:
     """Records paper signals and resolves them against subsequent price action."""
 
     def __init__(self, db: Database) -> None:
         self._db = db
+
+    # ------------------------------------------------------------------ the run
+
+    def begin(
+        self,
+        strategy_id: str,
+        *,
+        spec_hash: str,
+        config_hash: str,
+        started_by: str,
+        at: datetime | None = None,
+    ) -> IncubationRun:
+        """Record the moment forward observation started (INC-01).
+
+        Without this, elapsed time is measured from the earliest paper signal, which is
+        elapsed *market* time: replaying a year of history would satisfy a 60-day
+        requirement in one second. The start is written once and never moved, so the
+        clock cannot be reset by re-running the tracker.
+        """
+        existing = self.run_for(strategy_id)
+        if existing is not None:
+            return existing
+
+        started = at or utcnow()
+        with self._db.transaction() as conn:
+            conn.execute(
+                "INSERT INTO incubation_runs(strategy_id, spec_hash, config_hash, "
+                "started_at, started_by) VALUES (?, ?, ?, ?, ?)",
+                (strategy_id, spec_hash, config_hash, started.isoformat(), started_by),
+            )
+        return IncubationRun(
+            strategy_id=strategy_id,
+            spec_hash=spec_hash,
+            config_hash=config_hash,
+            started_at=started,
+            started_by=started_by,
+        )
+
+    def run_for(self, strategy_id: str) -> IncubationRun | None:
+        row = self._db.connection.execute(
+            "SELECT * FROM incubation_runs WHERE strategy_id = ?", (strategy_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return IncubationRun(
+            strategy_id=str(row["strategy_id"]),
+            spec_hash=str(row["spec_hash"]),
+            config_hash=str(row["config_hash"]),
+            started_at=datetime.fromisoformat(str(row["started_at"])),
+            started_by=str(row["started_by"]),
+        )
 
     def record_signals(self, strategy_id: str, spec: StrategySpec, series: KlineSeries) -> int:
         """Evaluate the strategy over `series` and persist resolved paper trades.
@@ -122,11 +189,21 @@ class IncubationTracker:
         ]
 
     def elapsed_days(self, strategy_id: str, *, now: datetime | None = None) -> int:
-        signals = self.signals_for(strategy_id)
-        if not signals:
+        """Days of *observation*, measured from the recorded start (INC-01).
+
+        Never from the first signal. Paper signals carry the timestamps of the bars
+        that produced them, so a backfilled history would report months of elapsed
+        time the moment it was loaded, and INC-01 would wave through a strategy that
+        has been watched for no time at all.
+
+        A strategy with no recorded start has been observed for zero days, whatever
+        signals exist against it.
+        """
+        run = self.run_for(strategy_id)
+        if run is None:
             return 0
         reference = now or utcnow()
-        return max(0, (reference - signals[0].signal_at).days)
+        return max(0, (reference - run.started_at).days)
 
 
 def _resolve(

@@ -5,6 +5,43 @@ versions by implementation phase rather than semver until Phase 11.
 
 ## [Unreleased]
 
+### The strategy factory: evidence, and gates that cannot pass by omission
+Two defects of the same kind as the unfed ledger — a declared structure nothing wrote,
+and a check that passed by staying silent.
+
+- **`backtests`, `verifications` and `selection_results` were never written by any
+  code.** The research loop computed all three, decided on them, and discarded the
+  evidence. A promotion could therefore cite nothing, an operator could inspect nothing,
+  and INC-04/05 had no stored backtest to compare incubation against. `FactoryStore` now
+  records every run with the provenance needed to reproduce it: spec hash, data hash,
+  engine version, cost model, window and a new configuration hash. Candidates are
+  persisted before they are judged, so a *rejected* candidate keeps its evidence — which
+  is what makes "99% of candidates fail" an analysable claim rather than a slogan.
+- **A selection gate with no evidence was omitted from the result entirely**, so a
+  candidate with no out-of-sample window passed selection having never been tested out
+  of sample. Gates now return `PASS` / `FAIL` / `UNDEFINED_POLICY`, and
+  `UNDEFINED_POLICY` blocks exactly as `FAIL` does. Missing out-of-sample data
+  (SEL-06) and an unmeasurable stop distance (SEL-07) are the two cases.
+- **INC-01's 60 days was satisfiable in one second.** Elapsed incubation was measured
+  from the earliest paper signal, and paper signals carry the timestamp of the bar that
+  produced them — so replaying a year of history reported a year of "incubation" the
+  moment it loaded. A new `incubation_runs` row records when forward observation
+  actually began; the start is written once and never moved, and a strategy with no
+  recorded start has been observed for zero days whatever signals exist against it.
+- `config_hash` covers the risk policy, exchange filters, cost model and starting
+  equity. Two results are only comparable when it matches; without it a strategy can
+  look better than another purely because it was measured under different rules.
+- `atlas factory {candidates,show,backtests,verification,gates,incubation,eligibility}`
+  is read-only. `atlas factory incubate --confirm` is the single lifecycle action, and
+  starts the observation clock at zero capital (INC-03).
+- **There is deliberately no `promote` CLI command.** Promotion is what puts capital
+  behind a strategy; the only path to it requires an explicit human approver in code
+  (PROM-01). A shell verb would put live trading one typo away from an inspection.
+
+No threshold was invented: every SEL/INC/PROM value used is the one already recorded in
+`docs/SPECIFICATION.md`. `UNDEFINED_POLICY` reports the absence of *evidence*, and stops
+the candidate rather than guessing.
+
 ### Why the tick did what it did
 A tick reporting `entries=0` was indistinguishable from a tick that had declined the
 market, one that never looked because nothing was deployed, and one that wanted to

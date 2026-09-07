@@ -13,7 +13,7 @@ from pathlib import Path
 
 from atlas.errors import PersistenceError
 
-SCHEMA_VERSION = "2"
+SCHEMA_VERSION = "3"
 _SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 
 
@@ -35,6 +35,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
     columns = {str(r["name"]) for r in conn.execute("PRAGMA table_info(orders)")}
     if columns and "position_id" not in columns:
         conn.execute("ALTER TABLE orders ADD COLUMN position_id TEXT")
+
+    backtest_columns = {str(r["name"]) for r in conn.execute("PRAGMA table_info(backtests)")}
+    if backtest_columns and "config_hash" not in backtest_columns:
+        conn.execute("ALTER TABLE backtests ADD COLUMN config_hash TEXT NOT NULL DEFAULT ''")
 
 
 def connect(path: Path) -> sqlite3.Connection:

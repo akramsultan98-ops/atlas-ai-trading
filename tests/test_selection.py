@@ -35,9 +35,18 @@ def stats(**kw: object) -> BacktestStats:
     return BacktestStats(**defaults)  # type: ignore[arg-type]
 
 
+def complete(**kw: object) -> object:
+    """Every gate supplied with evidence. A PASS is only meaningful this way."""
+    return evaluate_gates(
+        stats(**kw),
+        out_of_sample=stats(),
+        median_stop_distance=D("0.05"),
+    )
+
+
 def test_healthy_strategy_passes_every_gate() -> None:
-    outcome = evaluate_gates(stats(), median_stop_distance=D("0.05"))
-    assert outcome.passed, outcome.failures
+    outcome = complete()
+    assert outcome.passed, outcome.failures  # type: ignore[attr-defined]
 
 
 def test_too_few_trades_rejected() -> None:
@@ -109,7 +118,7 @@ def test_stop_above_feasible_band_rejected(stop: str) -> None:
 
 @pytest.mark.parametrize("stop", ["0.03", "0.05", "0.10", "0.20"])
 def test_stop_inside_feasible_band_accepted(stop: str) -> None:
-    outcome = evaluate_gates(stats(), median_stop_distance=D(stop))
+    outcome = evaluate_gates(stats(), out_of_sample=stats(), median_stop_distance=D(stop))
     assert outcome.passed, outcome.failures
 
 
@@ -133,12 +142,16 @@ def test_thresholds_are_configurable_not_hardcoded() -> None:
     lenient = SelectionThresholds(min_trades=10, min_profit_factor=D("1.0"))
     assert evaluate_gates(
         stats(trade_count=15, profit_factor=D("1.1")),
+        out_of_sample=stats(trade_count=15, profit_factor=D("1.1")),
         thresholds=lenient,
         median_stop_distance=D("0.05"),
     ).passed
 
 
 def test_outcome_serialises_for_persistence() -> None:
-    payload = evaluate_gates(stats(), median_stop_distance=D("0.05")).as_dict()
+    payload = evaluate_gates(
+        stats(), out_of_sample=stats(), median_stop_distance=D("0.05")
+    ).as_dict()
     assert payload["passed"] is True
-    assert all("gate" in g and "passed" in g for g in payload["gates"])
+    assert all("gate" in g and "verdict" in g for g in payload["gates"])
+    assert payload["undefined"] == []

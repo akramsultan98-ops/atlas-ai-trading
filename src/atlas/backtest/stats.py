@@ -50,6 +50,26 @@ class BacktestStats:
             "capped_trade_count": self.capped_trade_count,
         }
 
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> BacktestStats:
+        """Rebuild stored stats. The inverse of `as_dict`, for evidence read back.
+
+        INC-04 and INC-05 compare incubation against the backtest, so the stored run
+        has to be reconstructable - otherwise the comparison silently uses whatever
+        happens to be in memory, which after a restart is nothing.
+        """
+        ints = {"trade_count", "wins", "losses", "capped_trade_count"}
+        values: dict[str, Any] = {}
+        for name in cls.__dataclass_fields__:
+            raw = payload[name]
+            if name in ints:
+                values[name] = int(raw)
+            elif name == "beats_buy_and_hold":
+                values[name] = bool(raw)
+            else:
+                values[name] = Decimal(str(raw))
+        return cls(**values)
+
 
 def max_drawdown(equity_curve: list[Decimal]) -> Decimal:
     """Largest peak-to-trough decline as a fraction of the peak."""

@@ -74,6 +74,25 @@ def main(argv: list[str] | None = None) -> int:
     dc.add_argument("-n", type=int, default=1, help="how many ticks back to show")
     dc.add_argument("--json", action="store_true")
 
+    fa = sub.add_parser("factory", help="strategy factory: candidates and their evidence")
+    fa_sub = fa.add_subparsers(dest="action", required=True)
+    cand = fa_sub.add_parser("candidates", help="list strategies and their lifecycle status")
+    cand.add_argument("--status", default="", help="filter by status, e.g. CANDIDATE")
+    for name, helptext in (
+        ("show", "spec, hash and status"),
+        ("backtests", "stored runs with provenance"),
+        ("verification", "independent verification result"),
+        ("gates", "per-gate verdicts, including UNDEFINED_POLICY"),
+        ("incubation", "observation start, elapsed days and paper metrics"),
+        ("eligibility", "promotion eligibility (read-only; never promotes)"),
+    ):
+        sp = fa_sub.add_parser(name, help=helptext)
+        sp.add_argument("strategy_id")
+    inc = fa_sub.add_parser("incubate", help="begin forward observation (VERIFIED -> INCUBATING)")
+    inc.add_argument("strategy_id")
+    inc.add_argument("--confirm", action="store_true", help="explicit operator confirmation")
+    inc.add_argument("--actor", default="operator")
+
     au = sub.add_parser("audit", help="audit trail")
     au_sub = au.add_subparsers(dest="action", required=True)
     au_sub.add_parser("verify")
@@ -108,6 +127,8 @@ def main(argv: list[str] | None = None) -> int:
             elif args.action == "disarm":
                 rec = killswitch.disarm(args.reason, args.actor, human_confirmed=args.confirm)
                 print(f"DISARMED: {rec.reason}")
+        elif args.group == "factory":
+            return _factory(db, audit, args)
         elif args.group == "decisions":
             return _decisions(audit, args)
         elif args.group == "audit":
@@ -249,6 +270,195 @@ def _runtime_command(args: argparse.Namespace) -> int:
         return 1
     finally:
         service.close()
+
+
+def _factory(db: Database, audit: AuditLog, args: argparse.Namespace) -> int:
+    """Inspect the strategy factory. Read-only except `incubate`.
+
+    There is deliberately no `promote` command. Promotion is what puts real capital
+    behind a strategy, and the only path to it requires an explicit human approver in
+    code (PROM-01). Adding a CLI verb for it would put live trading one shell command
+    away from an operator who meant to inspect something.
+    """
+    from atlas.backtest.stats import BacktestStats
+    from atlas.factory.store import FactoryStore
+    from atlas.incubation.divergence import check_divergence, compute_metrics
+    from atlas.incubation.tracker import IncubationTracker
+    from atlas.promotion.gate import evaluate_promotion
+    from atlas.strategy.registry import StrategyRegistry
+
+    registry = StrategyRegistry(db)
+    store = FactoryStore(db)
+    tracker = IncubationTracker(db)
+
+    if args.action == "candidates":
+        rows = db.connection.execute(
+            "SELECT id, symbol, timeframe, status, created_at FROM strategies "
+            "WHERE (? = '' OR status = ?) ORDER BY created_at",
+            (args.status.upper(), args.status.upper()),
+        ).fetchall()
+        if not rows:
+            print("no strategies recorded" + (f" with status {args.status}" if args.status else ""))
+            return 0
+        for row in rows:
+            print(
+                f"{row['id']}  {row['status']:<11} {row['symbol']:<10} "
+                f"{row['timeframe']:<5} {row['created_at']}"
+            )
+        return 0
+
+    strategy_id = args.strategy_id
+    status = registry.status(strategy_id)
+    if status is None:
+        print(f"error: no strategy {strategy_id}", file=sys.stderr)
+        return 2
+
+    if args.action == "show":
+        spec = registry.load_spec(strategy_id)
+        print(f"id        {strategy_id}")
+        print(f"status    {status}")
+        if spec is None:
+            print("spec      UNREADABLE")
+            return 1
+        print(f"name      {spec.name}")
+        print(f"symbol    {spec.symbol} {spec.timeframe}")
+        print(f"spec_hash {spec.content_hash()}")
+        print(f"stop      {spec.stop.kind} {spec.stop.value}")
+        print(f"target    {spec.target.kind} {spec.target.value}")
+        for index, rule in enumerate(spec.entries):
+            print(f"entry {index}   {rule.side}, {len(rule.conditions)} condition(s)")
+        return 0
+
+    if args.action == "backtests":
+        runs = store.backtests_for(strategy_id)
+        if not runs:
+            print("no backtests recorded for this strategy")
+            return 1
+        for run in runs:
+            print(f"{run.engine:<13} {run.engine_version:<14} {run.created_at}")
+            print(f"    window      {run.window_start} .. {run.window_end}")
+            print(f"    data_hash   {run.data_hash}")
+            print(f"    config_hash {run.config_hash or '(not recorded)'}")
+            print(f"    costs       {run.cost_model}")
+            print(f"    stats       {run.stats}")
+        return 0
+
+    if args.action == "verification":
+        record = store.verification_for(strategy_id)
+        if record is None:
+            print("no verification recorded for this strategy")
+            return 1
+        print(f"passed  {record['passed']}")
+        print(f"detail  {record['detail']}")
+        return 0
+
+    if args.action == "gates":
+        record = store.selection_for(strategy_id)
+        if record is None:
+            print("no selection result recorded for this strategy")
+            return 1
+        print(f"passed {record['passed']}")
+        for gate in record["gates"]["gates"]:
+            print(f"  {gate['verdict']:<17} {gate['gate']:<28} {gate['detail']}")
+        undefined = record["gates"].get("undefined") or []
+        if undefined:
+            print(f"blocked by undefined policy: {undefined}")
+        return 0
+
+    if args.action == "incubation":
+        observation = tracker.run_for(strategy_id)
+        if observation is None:
+            print("incubation has not been started for this strategy")
+            print("observation elapsed: 0 days (INC-01 measures from the recorded start)")
+            return 1
+        signals = tracker.signals_for(strategy_id)
+        metrics = compute_metrics(signals)
+        print(f"started_at  {observation.started_at.isoformat()} by {observation.started_by}")
+        print(f"spec_hash   {observation.spec_hash}")
+        print(f"config_hash {observation.config_hash}")
+        print(f"elapsed     {tracker.elapsed_days(strategy_id)} days")
+        print(f"signals     {len(signals)} recorded, {metrics.trade_count} closed")
+        print(f"win_rate    {metrics.win_rate}")
+        print(f"profit_fact {metrics.profit_factor}")
+        print(f"drawdown    {metrics.max_drawdown}")
+        return 0
+
+    if args.action == "eligibility":
+        stored = store.primary_backtest(strategy_id)
+        if stored is None:
+            print("UNDEFINED_POLICY: no stored backtest to compare incubation against")
+            return 1
+        signals = tracker.signals_for(strategy_id)
+        divergence = check_divergence(
+            signals, BacktestStats.from_dict(stored.stats), tracker.elapsed_days(strategy_id)
+        )
+        decision = evaluate_promotion(divergence, signals, {})
+        print(f"status              {status}")
+        print(f"gates_satisfied     {decision.eligible}")
+        print(f"max_correlation     {decision.max_observed_correlation}")
+        for reason in decision.reasons:
+            print(f"  blocked: {reason}")
+        print("promotion still requires explicit human approval (PROM-01); this command")
+        print("reports eligibility only and cannot promote anything.")
+        return 0
+
+    if args.action == "incubate":
+        return _begin_incubation(db, audit, registry, tracker, store, strategy_id, status, args)
+
+    return 0
+
+
+def _begin_incubation(
+    db: Database,
+    audit: AuditLog,
+    registry: Any,
+    tracker: Any,
+    store: Any,
+    strategy_id: str,
+    status: Any,
+    args: argparse.Namespace,
+) -> int:
+    """VERIFIED -> INCUBATING. Zero capital (INC-03); starts the observation clock."""
+    from atlas.models import StrategyStatus
+
+    if not args.confirm:
+        print(
+            "refusing: pass --confirm. Beginning incubation starts the INC-01 clock, "
+            "and the start time is written once and never moved.",
+            file=sys.stderr,
+        )
+        return 2
+    if status is not StrategyStatus.VERIFIED:
+        print(
+            f"refusing: strategy is {status}, not VERIFIED. Only a strategy that has "
+            "passed verification and every selection gate may be incubated.",
+            file=sys.stderr,
+        )
+        return 2
+
+    spec = registry.load_spec(strategy_id)
+    stored = store.primary_backtest(strategy_id)
+    run = tracker.begin(
+        strategy_id,
+        spec_hash=spec.content_hash() if spec else "",
+        config_hash=stored.config_hash if stored else "",
+        started_by=args.actor,
+    )
+    registry.set_status(strategy_id, StrategyStatus.INCUBATING)
+    audit.append(
+        AuditEventType.STRATEGY_STATUS_CHANGED,
+        {
+            "event": "incubation_started",
+            "strategy_id": strategy_id,
+            "spec_hash": run.spec_hash,
+            "config_hash": run.config_hash,
+            "started_by": run.started_by,
+        },
+        args.actor,
+    )
+    print(f"INCUBATING from {run.started_at.isoformat()}")
+    print("zero capital is committed (INC-03). Promotion remains a separate human step.")
+    return 0
 
 
 def _decisions(audit: AuditLog, args: argparse.Namespace) -> int:

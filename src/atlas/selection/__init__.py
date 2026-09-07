@@ -2,9 +2,10 @@
 
 from atlas.selection.gates import (
     GateResult,
+    GateVerdict,
     SelectionOutcome,
     SelectionThresholds,
     evaluate_gates,
 )
 
-__all__ = ["GateResult", "SelectionOutcome", "SelectionThresholds", "evaluate_gates"]
+__all__ = ["GateResult", "GateVerdict", "SelectionOutcome", "SelectionThresholds", "evaluate_gates"]

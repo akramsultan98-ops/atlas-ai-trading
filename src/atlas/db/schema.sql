@@ -72,6 +72,10 @@ CREATE TABLE IF NOT EXISTS backtests (
     cost_model     TEXT NOT NULL,            -- JSON: fees, slippage
     window_start   TEXT NOT NULL,
     window_end     TEXT NOT NULL,
+    -- Hash of the risk policy, exchange filters and cost model the run used. Two
+    -- results are only comparable when this matches; without it a strategy can look
+    -- better than another purely because it was measured under different rules.
+    config_hash    TEXT NOT NULL DEFAULT '',
     stats          TEXT NOT NULL,            -- JSON
     created_at     TEXT NOT NULL
 ) STRICT;
@@ -101,6 +105,18 @@ CREATE TABLE IF NOT EXISTS selection_results (
 ) STRICT;
 
 -- ---------------------------------------------------------- incubation (INC-01..05)
+
+-- When forward observation actually began. INC-01 requires 60 days of it, and without
+-- an explicit start that requirement is satisfiable by replaying 60 days of history in
+-- one second: the paper signals carry historical timestamps, so "elapsed" measured from
+-- the earliest signal is elapsed *market* time, not elapsed observation.
+CREATE TABLE IF NOT EXISTS incubation_runs (
+    strategy_id TEXT PRIMARY KEY REFERENCES strategies(id),
+    spec_hash   TEXT NOT NULL,
+    config_hash TEXT NOT NULL,
+    started_at  TEXT NOT NULL,
+    started_by  TEXT NOT NULL
+) STRICT;
 
 CREATE TABLE IF NOT EXISTS incubation_signals (
     id           TEXT PRIMARY KEY,
