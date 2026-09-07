@@ -65,3 +65,30 @@ changing the policy, not waiting for equity.
 
 `Settings.for_research_plane()` returns a settings object with exchange credentials
 stripped, enforcing AI-01 in code rather than by convention.
+
+## Research plane
+
+The advisory plane's credential is separate from the exchange's, and neither process
+holds the other's. A model provider reachable with an exchange key would make prompt
+injection an execution path; an exchange reachable with a model key would make a
+research bug a trading bug.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `ATLAS_RESEARCH_PROVIDER` | `anthropic` | Which `SpecClient` implementation to build. |
+| `ATLAS_RESEARCH_API_KEY` | unset | The provider credential. **Unset means no candidates are generated** — the control plane runs unaffected (AI-08). |
+| `ATLAS_RESEARCH_MODEL` | provider default | Override the model id. |
+
+The SDK is an optional dependency, so the trading process never needs it installed:
+
+```bash
+pip install -e '.[research]'
+export ATLAS_RESEARCH_API_KEY=...        # never the Binance key
+atlas research provider                  # confirms the credential and that no exchange key is present
+atlas research run --passes 20
+```
+
+`atlas research run` fetches real candles and the symbol's real `exchangeInfo` filters
+(both public, unsigned endpoints — the research process authenticates to nothing), then
+runs generate → validate → backtest → independently verify → gate, storing evidence for
+every candidate including the rejected ones.

@@ -5,6 +5,23 @@ versions by implementation phase rather than semver until Phase 11.
 
 ## [Unreleased]
 
+### The research plane is now runnable from configuration
+- `ATLAS_RESEARCH_PROVIDER` / `ATLAS_RESEARCH_API_KEY` / `ATLAS_RESEARCH_MODEL`. The
+  research credential is separate from the exchange credential and neither plane holds
+  the other's: `for_research_plane()` strips the Binance keys, and the new
+  `for_execution_plane()` strips the research key. A model provider reachable with an
+  exchange key would make prompt injection an execution path.
+- `research/provider.py` builds the configured `SpecClient`. That Protocol was already
+  the provider interface, so this is a registry, not a new architecture. A missing
+  credential fails at the moment generation is attempted, naming the variable to set —
+  never at import, because the control plane must run with no provider configured (AI-08).
+- `atlas research run` executes the full pipeline on **real** candles and the symbol's
+  **real** `exchangeInfo` filters, so SEL-07 feasibility is decided against the actual
+  minimum notional rather than the assumed $5. Both endpoints are public and unsigned:
+  the research process authenticates to nothing.
+- `atlas research provider` reports the credential state and asserts no exchange key is
+  present in the research plane.
+
 ### The strategy factory: evidence, and gates that cannot pass by omission
 Two defects of the same kind as the unfed ledger — a declared structure nothing wrote,
 and a check that passed by staying silent.

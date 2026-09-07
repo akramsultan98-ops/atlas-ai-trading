@@ -74,6 +74,14 @@ def main(argv: list[str] | None = None) -> int:
     dc.add_argument("-n", type=int, default=1, help="how many ticks back to show")
     dc.add_argument("--json", action="store_true")
 
+    rs = sub.add_parser("research", help="generate and evaluate candidate strategies")
+    rs_sub = rs.add_subparsers(dest="action", required=True)
+    rr = rs_sub.add_parser("run", help="one full factory pass on real market data")
+    rr.add_argument("--passes", type=int, default=1, help="candidates to attempt")
+    rr.add_argument("--bars", type=int, default=0, help="history depth; 0 = ATLAS_HISTORY_BARS")
+    rr.add_argument("--symbol", default="", help="default: the first configured symbol")
+    rs_sub.add_parser("provider", help="report the configured research provider")
+
     fa = sub.add_parser("factory", help="strategy factory: candidates and their evidence")
     fa_sub = fa.add_subparsers(dest="action", required=True)
     cand = fa_sub.add_parser("candidates", help="list strategies and their lifecycle status")
@@ -103,6 +111,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.group in ("preflight", "run", "health"):
         return _runtime_command(args)
+    if args.group == "research":
+        return _research_command(args)
 
     try:
         db, killswitch, audit = _build()
@@ -270,6 +280,100 @@ def _runtime_command(args: argparse.Namespace) -> int:
         return 1
     finally:
         service.close()
+
+
+def _research_command(args: argparse.Namespace) -> int:
+    """Run the factory pipeline on real candles.
+
+    The research plane is built without exchange credentials (AI-01). It needs none:
+    candles and symbol filters are public, unsigned endpoints. A process that cannot
+    authenticate to the exchange cannot place an order however it is prompted.
+    """
+    from atlas.data.klines import BinanceKlineClient, UrllibTransport
+    from atlas.data.models import Timeframe
+    from atlas.research.loop import ResearchLoop
+    from atlas.research.provider import build_spec_client
+    from atlas.risk.filters import ExchangeFilterCache
+    from atlas.risk.sizing import SizingPolicy
+
+    try:
+        settings, risk = load_settings()
+    except AtlasError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    settings = settings.for_research_plane()
+
+    if args.action == "provider":
+        from atlas.research.provider import API_KEY_VAR
+
+        print(f"provider    {settings.research_provider}")
+        print(f"model       {settings.research_model or '(provider default)'}")
+        print(f"credential  {'present' if settings.has_research_credentials() else 'ABSENT'}")
+        print(f"binance_key {'PRESENT - BUG' if settings.binance_api_key else 'absent (correct)'}")
+        if not settings.has_research_credentials():
+            print(f"set {API_KEY_VAR} to generate candidates")
+            return 1
+        return 0
+
+    try:
+        client = build_spec_client(settings)
+    except AtlasError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    symbol = (args.symbol or settings.symbol_list[0]).upper()
+    bars = args.bars or settings.history_bars
+
+    klines = BinanceKlineClient(settings.exchange_env, transport=UrllibTransport())
+    try:
+        series = klines.fetch(symbol, Timeframe(settings.timeframe), max_bars=bars)
+    except AtlasError as exc:
+        print(f"error: could not fetch candles for {symbol}: {exc}", file=sys.stderr)
+        return 1
+
+    # RISK-09: size against the exchange's real filters, never the assumed defaults.
+    # SEL-07 feasibility is decided against the real minimum notional.
+    try:
+        filters = ExchangeFilterCache(settings.exchange_env, transport=UrllibTransport()).get(
+            symbol
+        )
+    except AtlasError as exc:
+        print(f"error: could not read exchange filters for {symbol}: {exc}", file=sys.stderr)
+        return 1
+
+    settings.ensure_data_dir()
+    db = Database(settings.db_path)
+    try:
+        loop = ResearchLoop(
+            db,
+            AuditLog(db),
+            client,
+            policy=SizingPolicy(
+                risk_pct=risk.risk_pct,
+                max_position_pct=risk.max_position_pct,
+                max_deployed_pct=risk.max_deployed_pct,
+                max_concurrent=risk.max_concurrent,
+            ),
+            filters=filters,
+        )
+        print(f"{len(series.bars)} bars of {symbol} {settings.timeframe}")
+        print(f"minNotional {filters.min_notional}  stepSize {filters.step_size}")
+
+        accepted = 0
+        for outcome in loop.run_batch(series, args.passes):
+            mark = "ACCEPTED" if outcome.accepted else f"rejected at {outcome.stage}"
+            print(f"  {mark}: {outcome.reason}")
+            if outcome.strategy_id:
+                print(f"    strategy {outcome.strategy_id}  spec {outcome.spec_hash}")
+            if outcome.engine_defect_suspected:
+                print("    ENGINE DEFECT SUSPECTED: the two engines disagree")
+            accepted += 1 if outcome.accepted else 0
+
+        print(f"{accepted}/{args.passes} accepted; evidence stored for every candidate")
+        print("inspect with: atlas factory candidates")
+        return 0
+    finally:
+        db.close()
 
 
 def _factory(db: Database, audit: AuditLog, args: argparse.Namespace) -> int:

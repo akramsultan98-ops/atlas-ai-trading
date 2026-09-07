@@ -113,6 +113,14 @@ class Settings(BaseSettings):
     binance_api_key: SecretStr | None = None
     binance_api_secret: SecretStr | None = None
 
+    # Research plane only. A separate credential on purpose: the model provider must
+    # never be reachable with an exchange key, and the exchange must never be reachable
+    # with a model key. Absent means no candidates are generated, which degrades
+    # throughput and nothing else (AI-08).
+    research_provider: str = "anthropic"
+    research_api_key: SecretStr | None = None
+    research_model: str = ""
+
     @model_validator(mode="after")
     def _guard_live(self) -> Self:
         if self.exchange_env is ExchangeEnv.LIVE and self.env is not Environment.PRODUCTION:
@@ -151,6 +159,8 @@ class Settings(BaseSettings):
             "env": str(self.env),
             "exchange_env": str(self.exchange_env),
             "quote_asset": self.quote_asset,
+            "research_provider": self.research_provider,
+            "research_credentials": "present" if self.has_research_credentials() else "absent",
             "symbols": ",".join(self.symbol_list),
             "timeframe": self.timeframe,
             "tick_interval_seconds": str(self.tick_interval_seconds),
@@ -170,6 +180,17 @@ class Settings(BaseSettings):
         telling a model not to trade is a request; a process without a key cannot trade.
         """
         return self.model_copy(update={"binance_api_key": None, "binance_api_secret": None})
+
+    def for_execution_plane(self) -> Settings:
+        """Return settings with the research credential stripped.
+
+        The mirror of `for_research_plane`. The trading process has no use for a model
+        provider key, and a key it does not hold is one it cannot spend or leak.
+        """
+        return self.model_copy(update={"research_api_key": None})
+
+    def has_research_credentials(self) -> bool:
+        return self.research_api_key is not None
 
     def ensure_data_dir(self) -> Path:
         self.data_dir.mkdir(parents=True, exist_ok=True)

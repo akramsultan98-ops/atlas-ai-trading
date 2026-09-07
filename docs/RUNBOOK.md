@@ -165,3 +165,32 @@ Not to be exercised until the full system audit and explicit approval.
 - [ ] Live `minNotional` and fee tier confirmed against `exchangeInfo` (RISK-09, BT-04)
 - [ ] At least one strategy through full incubation with human promotion approval
 - [ ] `ATLAS_EXCHANGE_ENV=live` set deliberately, as the final step
+
+## Producing the first candidate strategy
+
+`NO_STRATEGY` on every tick is the correct state until this has been done. Nothing can
+trade before a candidate has passed every gate and been incubated.
+
+```bash
+pip install -e '.[research]'             # the trading process does not need this
+export ATLAS_RESEARCH_API_KEY=...        # research plane only, never the Binance key
+atlas research provider                  # expect: credential present, binance_key absent
+atlas research run --passes 20           # 99% of candidates are expected to fail
+
+atlas factory candidates                 # every candidate, accepted or rejected
+atlas factory gates <id>                 # per-gate verdicts, including UNDEFINED_POLICY
+atlas factory backtests <id>             # provenance: data hash, config hash, window
+atlas factory verification <id>          # the independent engine's verdict
+```
+
+A candidate that reaches `VERIFIED` may then begin forward observation:
+
+```bash
+atlas factory incubate <id> --confirm    # starts the INC-01 clock; commits zero capital
+atlas factory incubation <id>            # elapsed days, paper metrics
+atlas factory eligibility <id>           # reports only; it cannot promote
+```
+
+Promotion to `LIVE` has no CLI command by design. It requires an explicit named human
+approver in code (PROM-01), and INC-01's sixty days of *observation* — measured from the
+recorded start, not from the age of the data — cannot be short-circuited.
